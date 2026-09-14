@@ -48,7 +48,8 @@ fun DeviceInfoScreen(
     userId: String,
     onContinue: () -> Unit,
     onBack: (() -> Unit)? = null,
-    onSignOut: () -> Unit = {}
+    onSignOut: () -> Unit = {},
+    onNavigateToPackageSelection: () -> Unit = {}
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
@@ -58,6 +59,13 @@ fun DeviceInfoScreen(
     val isProOrInTrial by DeviceManager.isProOrInTrialState.collectAsState()
     val isSyncing by OdooIntegrationManager.isSyncing.collectAsState()
     val customerName by DeviceManager.customerNameState.collectAsState()
+    val packageRequired by DeviceManager.packageRequired.collectAsState()
+
+    LaunchedEffect(packageRequired) {
+        if (packageRequired) {
+            onNavigateToPackageSelection()
+        }
+    }
 
     var deviceId by remember { mutableStateOf(DeviceManager.getDeviceId()) }
     var deviceKey by remember { mutableStateOf(DeviceManager.getDeviceKey()) }
@@ -110,6 +118,11 @@ fun DeviceInfoScreen(
             }
         }
 
+        if (DeviceManager.packageRequired.value) {
+            onNavigateToPackageSelection()
+            return@LaunchedEffect
+        }
+
         // Refresh dynamic credentials in case registration updated/resolved conflict
         deviceId = DeviceManager.getDeviceId()
         deviceKey = DeviceManager.getDeviceKey()
@@ -120,6 +133,10 @@ fun DeviceInfoScreen(
             if (!isAutoRedirecting) {
                 try {
                     val syncedCount = OdooIntegrationManager.syncPlaylistsFromOdoo(context, targetUserId)
+                    if (DeviceManager.packageRequired.value) {
+                        onNavigateToPackageSelection()
+                        break
+                    }
                     if (syncedCount > 0) {
                         val custName = DeviceManager.getCustomerName() ?: user?.name ?: "Değerli Müşterimiz"
                         autoDetectedWelcomeName = custName

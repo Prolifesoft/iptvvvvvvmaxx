@@ -42,6 +42,36 @@ object OdooIntegrationManager {
     private val _lastSyncMessage = MutableStateFlow<String?>(null)
     val lastSyncMessage: StateFlow<String?> = _lastSyncMessage.asStateFlow()
 
+    private fun parseOdooPackageResponse(resultJson: JSONObject) {
+        val status = resultJson.optString("status", "")
+        val code = resultJson.optString("code", "")
+        val upgradeRequired = resultJson.optBoolean("upgrade_required", false) || status == "package_required" || code == "upgrade_required"
+
+        if (upgradeRequired) {
+            val upgradeUrl = resultJson.optString("upgrade_url", resultJson.optString("url", ""))
+            val packagesArray = resultJson.optJSONArray("packages")
+            val pkgList = mutableListOf<DeviceManager.OdooPackageInfo>()
+            if (packagesArray != null) {
+                for (i in 0 until packagesArray.length()) {
+                    val pObj = packagesArray.getJSONObject(i)
+                    pkgList.add(
+                        DeviceManager.OdooPackageInfo(
+                            id = pObj.optString("id", pObj.optString("code", "$i")),
+                            title = pObj.optString("title", pObj.optString("name", "Paket ${i + 1}")),
+                            duration = pObj.optString("duration", pObj.optString("period", "")),
+                            description = pObj.optString("description", pObj.optString("desc", "")),
+                            price = pObj.optString("price", ""),
+                            checkoutUrl = pObj.optString("checkout_url", pObj.optString("url", upgradeUrl))
+                        )
+                    )
+                }
+            }
+            DeviceManager.setPackageRequired(true, upgradeUrl, pkgList)
+        } else {
+            DeviceManager.setPackageRequired(false, null, emptyList())
+        }
+    }
+
     /**
      * Registers new user as an Odoo 19 customer with an active 15-day Trial Package.
      */
@@ -96,6 +126,7 @@ object OdooIntegrationManager {
                 if (responseStr.isNotBlank()) {
                     val rootJson = JSONObject(responseStr)
                     val resultJson = rootJson.optJSONObject("result") ?: rootJson
+                    parseOdooPackageResponse(resultJson)
                     val status = resultJson.optString("status", "")
                     val errorObj = rootJson.optJSONObject("error")
                     val errorMsg = errorObj?.optJSONObject("data")?.optString("message") 
@@ -305,6 +336,7 @@ object OdooIntegrationManager {
                 val rootJson = JSONObject(responseStr)
                 // Odoo returns {"jsonrpc": "2.0", "result": {...}}
                 val json = rootJson.optJSONObject("result") ?: rootJson
+                parseOdooPackageResponse(json)
                 
                 // If Odoo returns is_pro or days_remaining, update device state
                 if (json.optBoolean("is_pro", false)) {

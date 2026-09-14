@@ -96,6 +96,11 @@ class MainActivity : ComponentActivity() {
                                             popUpTo(NavRoutes.DEVICE_INFO) { inclusive = true }
                                         }
                                     },
+                                    onNavigateToPackageSelection = {
+                                        navController.navigate("${NavRoutes.PACKAGE_SELECTION}/$currentUserId") {
+                                            popUpTo(NavRoutes.DEVICE_INFO) { inclusive = true }
+                                        }
+                                    },
                                     onBack = {
                                         if (navController.previousBackStackEntry != null) {
                                             navController.popBackStack()

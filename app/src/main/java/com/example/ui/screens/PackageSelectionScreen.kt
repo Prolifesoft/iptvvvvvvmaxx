@@ -1,5 +1,7 @@
 package com.example.ui.screens
 
+import android.content.Intent
+import android.net.Uri
 import android.content.res.Configuration
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -19,6 +21,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalConfiguration
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -39,36 +42,73 @@ fun PackageSelectionScreen(
     userId: String,
     onPackageSelected: (String) -> Unit
 ) {
+    val context = LocalContext.current
     val scope = rememberCoroutineScope()
     var selectedPackageId by remember { mutableStateOf("15_DAYS_FULL_ACCESS") }
     var isLoading by remember { mutableStateOf(false) }
     val configuration = LocalConfiguration.current
     val isLandscape = configuration.orientation == Configuration.ORIENTATION_LANDSCAPE
 
-    val packages = listOf(
-        OdooPackageItem(
-            id = "15_DAYS_FULL_ACCESS",
-            title = "15 Günlük Tam Yetkili Deneme Paketi",
-            duration = "15 Gün",
-            description = "İlk 15 gün tüm IPTV özellikler, sınırsız liste desteği ve QR kod ile uzaktan yönetim aktif.",
-            price = "Ücretsiz",
-            isPopular = true
-        ),
-        OdooPackageItem(
-            id = "PRO_MONTHLY",
-            title = "Pro IPTV Aylık Paket",
-            duration = "1 Ay",
-            description = "Sınırsız çalma listesi, gelişmiş kanal yönetimi ve öncelikli Odoo 19 bulut senkronizasyonu.",
-            price = "₺99.99 / Ay"
-        ),
-        OdooPackageItem(
-            id = "PRO_ANNUAL",
-            title = "Pro IPTV Yıllık Paket",
-            duration = "1 Yıl",
-            description = "12 ay kesintisiz IPTV deneyimi, özel VIP destek hattı ve %30 indirimli avantajlı fiyat.",
-            price = "₺899.99 / Yıl"
-        )
-    )
+    val odooPackages by DeviceManager.odooPackages.collectAsState()
+    val upgradeUrl by DeviceManager.upgradeUrl.collectAsState()
+
+    val packages = remember(odooPackages) {
+        if (odooPackages.isNotEmpty()) {
+            odooPackages.map { p ->
+                OdooPackageItem(
+                    id = p.id,
+                    title = p.title,
+                    duration = p.duration,
+                    description = p.description,
+                    price = p.price,
+                    isPopular = false
+                )
+            }
+        } else {
+            listOf(
+                OdooPackageItem(
+                    id = "PRO_MONTHLY",
+                    title = "Pro IPTV Aylık Paket",
+                    duration = "1 Ay",
+                    description = "Sınırsız çalma listesi, gelişmiş kanal yönetimi ve öncelikli Odoo 19 bulut senkronizasyonu.",
+                    price = "₺99.99 / Ay"
+                ),
+                OdooPackageItem(
+                    id = "PRO_ANNUAL",
+                    title = "Pro IPTV Yıllık Paket",
+                    duration = "1 Yıl",
+                    description = "12 ay kesintisiz IPTV deneyimi, özel VIP destek hattı ve %30 indirimli avantajlı fiyat.",
+                    price = "₺899.99 / Yıl"
+                )
+            )
+        }
+    }
+
+    val handlePackageConfirmation: () -> Unit = {
+        isLoading = true
+        scope.launch {
+            val selectedPkg = odooPackages.find { it.id == selectedPackageId }
+            val checkoutUrl = selectedPkg?.checkoutUrl ?: upgradeUrl ?: DeviceManager.getOdooShopTrialUrl()
+            
+            try {
+                val intent = Intent(Intent.ACTION_VIEW, Uri.parse(checkoutUrl)).apply {
+                    addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                }
+                context.startActivity(intent)
+            } catch (e: Exception) {
+                // ignore
+            }
+
+            if (selectedPackageId.contains("15") || selectedPackageId.contains("trial", ignoreCase = true) || selectedPackageId == "15_DAYS_FULL_ACCESS") {
+                DeviceManager.updateTrialDays(15)
+            } else {
+                DeviceManager.upgradeToPro()
+            }
+            DeviceManager.setPackageRequired(false, null, emptyList())
+            isLoading = false
+            onPackageSelected(selectedPackageId)
+        }
+    }
 
     Box(
         modifier = Modifier
@@ -191,18 +231,7 @@ fun PackageSelectionScreen(
                     Spacer(modifier = Modifier.height(10.dp))
 
                     Button(
-                        onClick = {
-                            isLoading = true
-                            scope.launch {
-                                if (selectedPackageId == "15_DAYS_FULL_ACCESS") {
-                                    DeviceManager.updateTrialDays(15)
-                                } else {
-                                    DeviceManager.upgradeToPro()
-                                }
-                                isLoading = false
-                                onPackageSelected(selectedPackageId)
-                            }
-                        },
+                        onClick = handlePackageConfirmation,
                         modifier = Modifier
                             .fillMaxWidth()
                             .height(48.dp),
@@ -350,18 +379,7 @@ fun PackageSelectionScreen(
                 Spacer(modifier = Modifier.height(12.dp))
 
                 Button(
-                    onClick = {
-                        isLoading = true
-                        scope.launch {
-                            if (selectedPackageId == "15_DAYS_FULL_ACCESS") {
-                                DeviceManager.updateTrialDays(15)
-                            } else {
-                                DeviceManager.upgradeToPro()
-                            }
-                            isLoading = false
-                            onPackageSelected(selectedPackageId)
-                        }
-                    },
+                    onClick = handlePackageConfirmation,
                     modifier = Modifier
                         .fillMaxWidth()
                         .height(52.dp),

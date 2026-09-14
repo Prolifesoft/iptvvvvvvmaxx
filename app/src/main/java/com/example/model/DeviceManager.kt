@@ -207,6 +207,30 @@ object DeviceManager {
         return "$server/shop/trial/activate?device=${getDeviceId()}&key=${getDeviceKey()}"
     }
 
+    data class OdooPackageInfo(
+        val id: String,
+        val title: String,
+        val duration: String,
+        val description: String,
+        val price: String,
+        val checkoutUrl: String
+    )
+
+    private val _packageRequired = MutableStateFlow(false)
+    val packageRequired: StateFlow<Boolean> = _packageRequired.asStateFlow()
+
+    private val _upgradeUrl = MutableStateFlow<String?>(null)
+    val upgradeUrl: StateFlow<String?> = _upgradeUrl.asStateFlow()
+
+    private val _odooPackages = MutableStateFlow<List<OdooPackageInfo>>(emptyList())
+    val odooPackages: StateFlow<List<OdooPackageInfo>> = _odooPackages.asStateFlow()
+
+    fun setPackageRequired(required: Boolean, url: String?, packages: List<OdooPackageInfo>) {
+        _packageRequired.value = required
+        _upgradeUrl.value = url
+        _odooPackages.value = packages
+    }
+
     fun getCustomerName(): String? {
         return prefs.getString(KEY_CUSTOMER_NAME, null)
     }
