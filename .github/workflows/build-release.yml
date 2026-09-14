@@ -1,7 +1,7 @@
 yaml
 name: Build and Release Android APK
 
-on:
+'on':
   push:
     branches:
       - main
@@ -24,7 +24,7 @@ jobs:
         uses: actions/setup-java@v4
         with:
           distribution: temurin
-          java-version: "17"
+          java-version: '17'
           cache: gradle
 
       - name: APK imza anahtarını hazırla
@@ -56,14 +56,10 @@ jobs:
           echo "version_code=$VERSION_CODE" >> "$GITHUB_OUTPUT"
           echo "version_name=$VERSION_NAME" >> "$GITHUB_OUTPUT"
 
-          echo "versionCode: $VERSION_CODE"
-          echo "versionName: $VERSION_NAME"
-
       - name: Release APK derle
         env:
           KEYSTORE_PATH: ${{ runner.temp }}/release.jks
           STORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
-          KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
           KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
         run: |
           set -euo pipefail
@@ -79,9 +75,6 @@ jobs:
           test -s "$APK_PATH"
           unzip -tq "$APK_PATH"
           unzip -l "$APK_PATH" | grep -q "AndroidManifest.xml"
-
-          echo "APK hazır:"
-          echo "$APK_PATH"
 
       - name: GitHub Release oluştur
         uses: softprops/action-gh-release@v2
@@ -144,10 +137,5 @@ jobs:
             -H "X-Maxx-Release-Secret: $ODOO_SECRET" \
             -d "$PAYLOAD")
 
-          echo "$RESPONSE" | jq .
-
           echo "$RESPONSE" | jq -e \
             '(.result.status // .status) == "success"'
-
-          echo "Odoo taslak sürüm oluşturuldu."
-
