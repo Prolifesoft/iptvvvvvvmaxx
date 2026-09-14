@@ -1,24 +1,27 @@
 yaml
 name: Build and Release Android APK
-
-'on':
+on:
   push:
     branches:
       - main
   workflow_dispatch:
 
+
 permissions:
   contents: write
+
 
 jobs:
   build-and-release:
     runs-on: ubuntu-latest
+
 
     steps:
       - name: Kodu indir
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
+
 
       - name: Java 17 kur
         uses: actions/setup-java@v4
@@ -27,6 +30,7 @@ jobs:
           java-version: '17'
           cache: gradle
 
+
       - name: APK imza anahtarını hazırla
         env:
           KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
@@ -34,108 +38,3 @@ jobs:
           set -euo pipefail
           test -n "$KEYSTORE_BASE64"
           echo "$KEYSTORE_BASE64" | base64 --decode > "$RUNNER_TEMP/release.jks"
-          test -s "$RUNNER_TEMP/release.jks"
-
-      - name: Sürüm bilgilerini oku
-        id: version
-        shell: bash
-        run: |
-          set -euo pipefail
-
-          VERSION_CODE=$(sed -nE \
-            's/.versionCode[[:space:]]=[[:space:]]([0-9]+)./\1/p' \
-            app/build.gradle.kts | head -n 1)
-
-          VERSION_NAME=$(sed -nE \
-            's/.versionName[[:space:]]=[[:space:]]"([^"]+)"./\1/p' \
-            app/build.gradle.kts | head -n 1)
-
-          test -n "$VERSION_CODE"
-          test -n "$VERSION_NAME"
-
-          echo "version_code=$VERSION_CODE" >> "$GITHUB_OUTPUT"
-          echo "version_name=$VERSION_NAME" >> "$GITHUB_OUTPUT"
-
-      - name: Release APK derle
-        env:
-          KEYSTORE_PATH: ${{ runner.temp }}/release.jks
-          STORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
-          KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
-        run: |
-          set -euo pipefail
-          chmod +x ./gradlew
-          ./gradlew clean assembleRelease --no-daemon
-
-      - name: APK kontrol et
-        run: |
-          set -euo pipefail
-
-          APK_PATH="app/build/outputs/apk/release/app-release.apk"
-
-          test -s "$APK_PATH"
-          unzip -tq "$APK_PATH"
-          unzip -l "$APK_PATH" | grep -q "AndroidManifest.xml"
-
-      - name: GitHub Release oluştur
-        uses: softprops/action-gh-release@v2
-        with:
-          tag_name: v${{ steps.version.outputs.version_name }}
-          name: MAXX PLAYER v${{ steps.version.outputs.version_name }}
-          generate_release_notes: true
-          files: app/build/outputs/apk/release/app-release.apk
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Odoo taslak sürüm oluştur
-        env:
-          ODOO_URL: https://maxxbilisim.com
-          ODOO_SECRET: ${{ secrets.MAXX_ODOO_RELEASE_SECRET }}
-          VERSION_CODE: ${{ steps.version.outputs.version_code }}
-          VERSION_NAME: ${{ steps.version.outputs.version_name }}
-          COMMIT_SHA: ${{ github.sha }}
-          REPOSITORY: ${{ github.repository }}
-        run: |
-          set -euo pipefail
-
-          APK_URL="https://github.com/${REPOSITORY}/releases/download/v${VERSION_NAME}/app-release.apk"
-          SOURCE_URL="https://github.com/${REPOSITORY}/commit/${COMMIT_SHA}"
-
-          CHANGED_FILES=$(git diff-tree \
-            --no-commit-id \
-            --name-only \
-            -r "$COMMIT_SHA" | paste -sd ', ' -)
-
-          RELEASE_NOTES=$(git log -1 --pretty=format:'%s')
-
-          PAYLOAD=$(jq -n \
-            --arg commit_sha "$COMMIT_SHA" \
-            --arg version_name "$VERSION_NAME" \
-            --arg apk_url "$APK_URL" \
-            --arg source_url "$SOURCE_URL" \
-            --arg changed_files "$CHANGED_FILES" \
-            --arg release_notes "$RELEASE_NOTES" \
-            --argjson version_code "$VERSION_CODE" \
-            '{
-              jsonrpc: "2.0",
-              method: "call",
-              params: {
-                commit_sha: $commit_sha,
-                version_name: $version_name,
-                version_code: $version_code,
-                apk_url: $apk_url,
-                apk_filename: "app-release.apk",
-                source_branch: "main",
-                source_url: $source_url,
-                changed_files: $changed_files,
-                release_notes: $release_notes
-              }
-            }')
-
-          RESPONSE=$(curl --fail-with-body -sS \
-            -X POST "$ODOO_URL/api/v1/release/draft" \
-            -H "Content-Type: application/json" \
-            -H "X-Maxx-Release-Secret: $ODOO_SECRET" \
-            -d "$PAYLOAD")
-
-          echo "$RESPONSE" | jq -e \
-            '(.result.status // .status) == "success"'
