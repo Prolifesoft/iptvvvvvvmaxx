@@ -93,11 +93,21 @@ object DeviceManager {
     }
 
     fun getDeviceId(): String {
-        return prefs.getString(KEY_DEVICE_ID, "MAX-0000-0000") ?: "MAX-0000-0000"
+        var id = if (::prefs.isInitialized) prefs.getString(KEY_DEVICE_ID, "") ?: "" else ""
+        if (id.isBlank() || id == "MAX-0000-0000") {
+            generateNewDeviceCredentials()
+            id = prefs.getString(KEY_DEVICE_ID, "") ?: ""
+        }
+        return id
     }
 
     fun getDeviceKey(): String {
-        return prefs.getString(KEY_DEVICE_KEY, "123456") ?: "123456"
+        var pin = if (::prefs.isInitialized) prefs.getString(KEY_DEVICE_KEY, "") ?: "" else ""
+        if (pin.isBlank() || pin == "123456") {
+            generateNewDeviceCredentials()
+            pin = prefs.getString(KEY_DEVICE_KEY, "") ?: ""
+        }
+        return pin
     }
 
     fun getDeviceModel(): String {
@@ -108,6 +118,37 @@ object DeviceManager {
 
     fun getOsVersion(): String {
         return "Android ${Build.VERSION.RELEASE} (API ${Build.VERSION.SDK_INT})"
+    }
+
+    fun getMacAddress(): String {
+        try {
+            val interfaces = java.net.NetworkInterface.getNetworkInterfaces()
+            while (interfaces.hasMoreElements()) {
+                val networkInterface = interfaces.nextElement()
+                val mac = networkInterface.hardwareAddress
+                if (mac != null && mac.isNotEmpty()) {
+                    val sb = StringBuilder()
+                    for (b in mac) {
+                        sb.append(String.format("%02X:", b))
+                    }
+                    if (sb.isNotEmpty()) {
+                        sb.deleteCharAt(sb.length - 1)
+                    }
+                    val macStr = sb.toString()
+                    if (macStr != "02:00:00:00:00:00") {
+                        return macStr
+                    }
+                }
+            }
+        } catch (e: Exception) {
+            // fallback
+        }
+        val id = getDeviceId().replace("MAX-", "").replace("-", "")
+        return if (id.length >= 8) {
+            "${id.substring(0,2)}:${id.substring(2,4)}:${id.substring(4,6)}:${id.substring(6,8)}:5E:21"
+        } else {
+            "02:42:AC:11:00:22"
+        }
     }
 
     fun getTrialStartDate(): Long {

@@ -22,6 +22,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
@@ -53,6 +54,8 @@ fun DeviceInfoScreen(
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
+    val configuration = LocalConfiguration.current
+    val isLandscape = configuration.orientation == android.content.res.Configuration.ORIENTATION_LANDSCAPE
 
     val daysRemaining by DeviceManager.trialDaysLeft.collectAsState()
     val isPro by DeviceManager.isProState.collectAsState()
@@ -79,10 +82,12 @@ fun DeviceInfoScreen(
 
     var showProDialog by remember { mutableStateOf(false) }
     var showProfileSheet by remember { mutableStateOf(false) }
+    var showSupportSheet by remember { mutableStateOf(false) }
     var currentUser by remember { mutableStateOf<com.example.model.db.UserEntity?>(null) }
     var autoDetectedWelcomeName by remember { mutableStateOf<String?>(null) }
     var isAutoRedirecting by remember { mutableStateOf(false) }
     var isOdooRegistered by remember { mutableStateOf(DeviceManager.isOdooCustomerSynced()) }
+    val macAddress = remember { DeviceManager.getMacAddress() }
 
     // Automatic registration and polling effect: ensures Odoo has the device registered and checks for remote playlists
     LaunchedEffect(userId) {
@@ -243,25 +248,18 @@ fun DeviceInfoScreen(
                 }
             }
 
-            Spacer(modifier = Modifier.height(4.dp))
+            Spacer(modifier = Modifier.height(6.dp))
 
-            // Main 2-Column Split: LEFT = Device Info & Trial Status, RIGHT = QR Code & Web Portal
-            Row(
+            // Adaptive layout: Single column in Portrait, Two columns in Landscape / Wide screens
+            BoxWithConstraints(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .weight(1f),
-                horizontalArrangement = Arrangement.spacedBy(10.dp),
-                verticalAlignment = Alignment.Top
+                    .weight(1f)
             ) {
-                // ==================== LEFT COLUMN: Device Info & Trial ====================
-                Column(
-                    modifier = Modifier
-                        .weight(1.05f)
-                        .fillMaxHeight()
-                        .verticalScroll(rememberScrollState()),
-                    verticalArrangement = Arrangement.spacedBy(8.dp)
-                ) {
-                    // 0. User Profile & Account Card
+                val showTwoColumns = isLandscape || maxWidth >= 680.dp
+
+                // Helper Card 0: Account / Profile
+                val accountCard = @Composable {
                     Card(
                         modifier = Modifier.fillMaxWidth().clickable { showProfileSheet = true },
                         colors = CardDefaults.cardColors(containerColor = Color(0xFF1E2838)),
@@ -270,14 +268,14 @@ fun DeviceInfoScreen(
                         Row(
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .padding(horizontal = 10.dp, vertical = 6.dp),
+                                .padding(horizontal = 12.dp, vertical = 8.dp),
                             verticalAlignment = Alignment.CenterVertically,
                             horizontalArrangement = Arrangement.SpaceBetween
                         ) {
                             Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.weight(1f)) {
                                 Box(
                                     modifier = Modifier
-                                        .size(30.dp)
+                                        .size(34.dp)
                                         .background(Color(0xFF1565C0), RoundedCornerShape(8.dp)),
                                     contentAlignment = Alignment.Center
                                 ) {
@@ -285,26 +283,29 @@ fun DeviceInfoScreen(
                                         Icons.Default.AccountCircle,
                                         contentDescription = null,
                                         tint = Color.White,
-                                        modifier = Modifier.size(18.dp)
+                                        modifier = Modifier.size(20.dp)
                                     )
                                 }
-                                Spacer(modifier = Modifier.width(8.dp))
+                                Spacer(modifier = Modifier.width(10.dp))
                                 Column(modifier = Modifier.weight(1f)) {
                                     Text(
                                         text = currentUser?.name ?: customerName ?: autoDetectedWelcomeName ?: "Kullanıcı",
                                         color = Color.White,
                                         fontWeight = FontWeight.Bold,
-                                        fontSize = 11.sp,
+                                        fontSize = 13.sp,
                                         maxLines = 1,
                                         overflow = TextOverflow.Ellipsis
                                     )
-                                    Text(
-                                        text = currentUser?.email ?: (if (userId.contains("@")) userId else "ncem0332006@gmail.com"),
-                                        color = Color(0xFF90CAF9),
-                                        fontSize = 10.sp,
-                                        maxLines = 1,
-                                        overflow = TextOverflow.Ellipsis
-                                    )
+                                    val displayEmail = currentUser?.email ?: (if (userId.contains("@")) userId else "")
+                                    if (displayEmail.isNotBlank()) {
+                                        Text(
+                                            text = displayEmail,
+                                            color = Color(0xFF90CAF9),
+                                            fontSize = 11.sp,
+                                            maxLines = 1,
+                                            overflow = TextOverflow.Ellipsis
+                                        )
+                                    }
                                 }
                             }
                             Row(verticalAlignment = Alignment.CenterVertically) {
@@ -314,13 +315,13 @@ fun DeviceInfoScreen(
                                         containerColor = Color(0xFF263238),
                                         contentColor = Color.White
                                     ),
-                                    contentPadding = PaddingValues(horizontal = 7.dp, vertical = 0.dp),
-                                    modifier = Modifier.height(24.dp),
+                                    contentPadding = PaddingValues(horizontal = 10.dp, vertical = 0.dp),
+                                    modifier = Modifier.height(30.dp),
                                     shape = RoundedCornerShape(6.dp)
                                 ) {
-                                    Text("Profil", fontSize = 10.sp, fontWeight = FontWeight.Medium)
+                                    Text("Profil", fontSize = 11.sp, fontWeight = FontWeight.Medium)
                                 }
-                                Spacer(modifier = Modifier.width(4.dp))
+                                Spacer(modifier = Modifier.width(6.dp))
                                 IconButton(
                                     onClick = {
                                         scope.launch {
@@ -330,19 +331,22 @@ fun DeviceInfoScreen(
                                             onSignOut()
                                         }
                                     },
-                                    modifier = Modifier.size(24.dp)
+                                    modifier = Modifier.size(30.dp)
                                 ) {
                                     Icon(
                                         Icons.Default.Logout,
                                         contentDescription = stringResource(R.string.sign_out_account),
                                         tint = Color(0xFFFFA726),
-                                        modifier = Modifier.size(15.dp)
+                                        modifier = Modifier.size(16.dp)
                                     )
                                 }
                             }
                         }
                     }
-                    // 1. Trial / License Card
+                }
+
+                // Helper Card 1: Trial / License Status
+                val trialCard = @Composable {
                     Card(
                         modifier = Modifier.fillMaxWidth(),
                         colors = CardDefaults.cardColors(
@@ -350,62 +354,90 @@ fun DeviceInfoScreen(
                         ),
                         shape = RoundedCornerShape(10.dp)
                     ) {
-                        Row(
+                        Column(
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .padding(horizontal = 10.dp, vertical = 7.dp),
-                            verticalAlignment = Alignment.CenterVertically
+                                .padding(horizontal = 12.dp, vertical = 10.dp)
                         ) {
-                            Box(
-                                modifier = Modifier
-                                    .size(30.dp)
-                                    .background(
-                                        if (isPro) Color(0xFF2E7D32) else if (isProOrInTrial) RedPrimary else Color(0xFFD32F2F),
-                                        RoundedCornerShape(8.dp)
-                                    ),
-                                contentAlignment = Alignment.Center
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                verticalAlignment = Alignment.CenterVertically
                             ) {
-                                Icon(
-                                    if (isPro) Icons.Default.Verified else if (isProOrInTrial) Icons.Default.Timer else Icons.Default.Warning,
-                                    contentDescription = null,
-                                    tint = Color.White,
-                                    modifier = Modifier.size(17.dp)
-                                )
-                            }
-                            Spacer(modifier = Modifier.width(8.dp))
-                            Column(modifier = Modifier.weight(1f)) {
-                                Row(
-                                    verticalAlignment = Alignment.CenterVertically,
-                                    horizontalArrangement = Arrangement.SpaceBetween,
-                                    modifier = Modifier.fillMaxWidth()
+                                Box(
+                                    modifier = Modifier
+                                        .size(32.dp)
+                                        .background(
+                                            if (isPro) Color(0xFF2E7D32) else if (isProOrInTrial) RedPrimary else Color(0xFFD32F2F),
+                                            RoundedCornerShape(8.dp)
+                                        ),
+                                    contentAlignment = Alignment.Center
                                 ) {
-                                    Text(
-                                        text = if (isPro) "PRO Sürüm Aktif" else if (isProOrInTrial) stringResource(R.string.trial_package_active) else stringResource(R.string.trial_expired_title),
-                                        fontWeight = FontWeight.Bold,
-                                        color = Color.White,
-                                        fontSize = 12.sp
+                                    Icon(
+                                        if (isPro) Icons.Default.Verified else if (isProOrInTrial) Icons.Default.Timer else Icons.Default.Warning,
+                                        contentDescription = null,
+                                        tint = Color.White,
+                                        modifier = Modifier.size(18.dp)
                                     )
-                                    if (!isPro && isProOrInTrial) {
-                                        Text(
-                                            text = stringResource(R.string.trial_remaining_days, daysRemaining),
-                                            color = Color(0xFF64B5F6),
-                                            fontWeight = FontWeight.Bold,
-                                            fontSize = 11.sp
-                                        )
-                                    }
                                 }
-                                Text(
-                                    text = if (isPro) "Sınırsız cihaz ve liste aktif." else if (isProOrInTrial) "İlk 15 gün tüm özellikler ve sınırsız liste açık." else "15 günlük deneme bitti. Sadece 1 liste etkin.",
-                                    color = Color.LightGray,
-                                    fontSize = 10.sp,
-                                    maxLines = 1,
-                                    overflow = TextOverflow.Ellipsis
-                                )
+                                Spacer(modifier = Modifier.width(10.dp))
+                                Column(modifier = Modifier.weight(1f)) {
+                                    Row(
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        horizontalArrangement = Arrangement.SpaceBetween,
+                                        modifier = Modifier.fillMaxWidth()
+                                    ) {
+                                        Text(
+                                            text = if (isPro) "PRO Sürüm Aktif" else if (isProOrInTrial) stringResource(R.string.trial_package_active) else stringResource(R.string.trial_expired_title),
+                                            fontWeight = FontWeight.Bold,
+                                            color = Color.White,
+                                            fontSize = 13.sp
+                                        )
+                                        if (!isPro && isProOrInTrial) {
+                                            Surface(
+                                                color = Color(0xFF1565C0).copy(alpha = 0.4f),
+                                                shape = RoundedCornerShape(12.dp)
+                                            ) {
+                                                Text(
+                                                    text = stringResource(R.string.trial_remaining_days, daysRemaining),
+                                                    color = Color(0xFF90CAF9),
+                                                    fontWeight = FontWeight.Bold,
+                                                    fontSize = 11.sp,
+                                                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 2.dp)
+                                                )
+                                            }
+                                        }
+                                    }
+                                    Spacer(modifier = Modifier.height(2.dp))
+                                    Text(
+                                        text = if (isPro) "Sınırsız cihaz ve liste etkin." else if (isProOrInTrial) "İlk 15 gün tüm özellikler ve sınırsız liste açık." else "Deneme süresi doldu. Listelerinizi yönetmek için yükseltin.",
+                                        color = Color.LightGray,
+                                        fontSize = 11.sp
+                                    )
+                                }
+                            }
+
+                            if (!isPro) {
+                                Spacer(modifier = Modifier.height(8.dp))
+                                Button(
+                                    onClick = { showProDialog = true },
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .height(36.dp),
+                                    shape = RoundedCornerShape(8.dp),
+                                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF2E7D32)),
+                                    contentPadding = PaddingValues(horizontal = 12.dp, vertical = 0.dp)
+                                ) {
+                                    Icon(Icons.Default.Star, contentDescription = null, tint = Color(0xFFFFD54F), modifier = Modifier.size(16.dp))
+                                    Spacer(modifier = Modifier.width(6.dp))
+                                    Text(stringResource(R.string.btn_upgrade_package), fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                                }
                             }
                         }
                     }
+                }
 
-                    // 2. Device Identity Identifiers (ID & Key)
+                // Helper Card 2: Device Credentials (ID & PIN)
+                val credentialsCard = @Composable {
                     Card(
                         modifier = Modifier.fillMaxWidth(),
                         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
@@ -414,24 +446,27 @@ fun DeviceInfoScreen(
                         Column(
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .padding(horizontal = 10.dp, vertical = 8.dp)
+                                .padding(12.dp),
+                            verticalArrangement = Arrangement.spacedBy(8.dp)
                         ) {
+                            Text("CİHAZ KİMLİK BİLGİLERİ", fontSize = 11.sp, color = Color.Gray, fontWeight = FontWeight.SemiBold)
+
                             // Device ID Row
                             Row(
                                 modifier = Modifier
                                     .fillMaxWidth()
-                                    .background(Color(0xFF1E232A), RoundedCornerShape(6.dp))
-                                    .padding(horizontal = 8.dp, vertical = 5.dp),
+                                    .background(Color(0xFF1E232A), RoundedCornerShape(8.dp))
+                                    .padding(horizontal = 10.dp, vertical = 8.dp),
                                 verticalAlignment = Alignment.CenterVertically,
                                 horizontalArrangement = Arrangement.SpaceBetween
                             ) {
                                 Column(modifier = Modifier.weight(1f)) {
-                                    Text(stringResource(R.string.device_id_label), color = Color.Gray, fontSize = 9.sp)
+                                    Text(stringResource(R.string.device_id_label), color = Color.Gray, fontSize = 10.sp)
                                     Text(
                                         text = deviceId,
                                         color = Color.White,
                                         fontWeight = FontWeight.Bold,
-                                        fontSize = 13.sp,
+                                        fontSize = 15.sp,
                                         fontFamily = FontFamily.Monospace,
                                         maxLines = 1,
                                         overflow = TextOverflow.Ellipsis
@@ -439,177 +474,258 @@ fun DeviceInfoScreen(
                                 }
                                 IconButton(
                                     onClick = { copyToClipboard("Cihaz ID", deviceId) },
-                                    modifier = Modifier.size(28.dp)
+                                    modifier = Modifier.size(36.dp)
                                 ) {
-                                    Icon(Icons.Default.ContentCopy, contentDescription = "Kopyala", tint = RedPrimary, modifier = Modifier.size(15.dp))
+                                    Icon(Icons.Default.ContentCopy, contentDescription = "Kopyala", tint = RedPrimary, modifier = Modifier.size(18.dp))
                                 }
                             }
-
-                            Spacer(modifier = Modifier.height(6.dp))
 
                             // Device Key / PIN Row
                             Row(
                                 modifier = Modifier
                                     .fillMaxWidth()
-                                    .background(Color(0xFF1E232A), RoundedCornerShape(6.dp))
-                                    .padding(horizontal = 8.dp, vertical = 5.dp),
+                                    .background(Color(0xFF1E232A), RoundedCornerShape(8.dp))
+                                    .padding(horizontal = 10.dp, vertical = 8.dp),
                                 verticalAlignment = Alignment.CenterVertically,
                                 horizontalArrangement = Arrangement.SpaceBetween
                             ) {
                                 Column(modifier = Modifier.weight(1f)) {
-                                    Text(stringResource(R.string.device_key_label), color = Color.Gray, fontSize = 9.sp)
+                                    Text(stringResource(R.string.device_key_label), color = Color.Gray, fontSize = 10.sp)
                                     Text(
                                         text = deviceKey,
                                         color = Color(0xFFFFCA28),
                                         fontWeight = FontWeight.Bold,
-                                        fontSize = 14.sp,
+                                        fontSize = 16.sp,
                                         fontFamily = FontFamily.Monospace,
                                         maxLines = 1
                                     )
                                 }
                                 IconButton(
                                     onClick = { copyToClipboard("Cihaz Anahtarı", deviceKey) },
-                                    modifier = Modifier.size(28.dp)
+                                    modifier = Modifier.size(36.dp)
                                 ) {
-                                    Icon(Icons.Default.ContentCopy, contentDescription = "Kopyala", tint = Color(0xFFFFCA28), modifier = Modifier.size(15.dp))
+                                    Icon(Icons.Default.ContentCopy, contentDescription = "Kopyala", tint = Color(0xFFFFCA28), modifier = Modifier.size(18.dp))
                                 }
-                            }
-
-                            Spacer(modifier = Modifier.height(6.dp))
-
-                            // Device Hardware & OS Details
-                            Row(
-                                modifier = Modifier.fillMaxWidth(),
-                                horizontalArrangement = Arrangement.SpaceBetween
-                            ) {
-                                Column(modifier = Modifier.weight(1f)) {
-                                    Text(stringResource(R.string.device_model_label), color = Color.Gray, fontSize = 9.sp)
-                                    Text(deviceModel, color = Color.LightGray, fontSize = 11.sp, fontWeight = FontWeight.Medium, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                                }
-                                Column(modifier = Modifier.weight(1f)) {
-                                    Text(stringResource(R.string.device_os_label), color = Color.Gray, fontSize = 9.sp)
-                                    Text(osVersion, color = Color.LightGray, fontSize = 11.sp, fontWeight = FontWeight.Medium, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                                }
-                            }
-                        }
-                    }
-
-                    // 3. Quick Actions
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.Center
-                    ) {
-                        if (!isPro) {
-                            Button(
-                                onClick = { showProDialog = true },
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .height(34.dp),
-                                shape = RoundedCornerShape(8.dp),
-                                colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF2E7D32)),
-                                contentPadding = PaddingValues(horizontal = 8.dp, vertical = 0.dp)
-                            ) {
-                                Icon(Icons.Default.Star, contentDescription = null, tint = Color(0xFFFFD54F), modifier = Modifier.size(15.dp))
-                                Spacer(modifier = Modifier.width(4.dp))
-                                Text(stringResource(R.string.btn_upgrade_package), fontSize = 11.sp, fontWeight = FontWeight.Bold, maxLines = 1)
                             }
                         }
                     }
                 }
 
-                // ==================== RIGHT COLUMN: QR Code & Web Management ====================
-                Card(
-                    modifier = Modifier
-                        .weight(0.95f)
-                        .fillMaxHeight(),
-                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-                    shape = RoundedCornerShape(10.dp)
-                ) {
+                // Helper Card 3: Device Hardware & System Specs
+                val specsCard = @Composable {
+                    Card(
+                        modifier = Modifier.fillMaxWidth(),
+                        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+                        shape = RoundedCornerShape(10.dp)
+                    ) {
+                        Column(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(12.dp),
+                            verticalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            Text("CİHAZ VE SİSTEM DETAYLARI", fontSize = 11.sp, color = Color.Gray, fontWeight = FontWeight.SemiBold)
+
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.spacedBy(10.dp)
+                            ) {
+                                Column(modifier = Modifier.weight(1f)) {
+                                    Text(stringResource(R.string.device_model_label), color = Color.Gray, fontSize = 10.sp)
+                                    Text(deviceModel, color = Color.White, fontSize = 12.sp, fontWeight = FontWeight.Medium, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                }
+                                Column(modifier = Modifier.weight(1f)) {
+                                    Text(stringResource(R.string.device_os_label), color = Color.Gray, fontSize = 10.sp)
+                                    Text(osVersion, color = Color.White, fontSize = 12.sp, fontWeight = FontWeight.Medium, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                }
+                            }
+
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.spacedBy(10.dp)
+                            ) {
+                                Column(modifier = Modifier.weight(1f)) {
+                                    Text("MAC Adresi", color = Color.Gray, fontSize = 10.sp)
+                                    Text(macAddress, color = Color(0xFF64B5F6), fontSize = 12.sp, fontWeight = FontWeight.Medium, fontFamily = FontFamily.Monospace, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                }
+                                Column(modifier = Modifier.weight(1f)) {
+                                    Text("Uygulama Sürümü", color = Color.Gray, fontSize = 10.sp)
+                                    Text("v${com.example.BuildConfig.VERSION_NAME} (${com.example.BuildConfig.VERSION_CODE})", color = Color.White, fontSize = 12.sp, fontWeight = FontWeight.Medium, maxLines = 1)
+                                }
+                            }
+                        }
+                    }
+                }
+
+                // Helper Card 4: QR Code & Web Management Portal
+                val qrPortalCard = @Composable {
+                    Card(
+                        modifier = Modifier.fillMaxWidth(),
+                        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+                        shape = RoundedCornerShape(10.dp)
+                    ) {
+                        Column(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(12.dp),
+                            horizontalAlignment = Alignment.CenterHorizontally,
+                            verticalArrangement = Arrangement.spacedBy(10.dp)
+                        ) {
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.Center
+                            ) {
+                                Icon(Icons.Default.QrCode2, contentDescription = null, tint = RedPrimary, modifier = Modifier.size(20.dp))
+                                Spacer(modifier = Modifier.width(6.dp))
+                                Text(
+                                    text = stringResource(R.string.qr_code_title),
+                                    fontWeight = FontWeight.Bold,
+                                    color = Color.White,
+                                    fontSize = 14.sp
+                                )
+                            }
+
+                            Text(
+                                text = "Listenizi yüklemek veya cihazınızı webden yönetmek için aşağıdaki QR kodu telefonunuzla okutun.",
+                                color = Color.Gray,
+                                fontSize = 11.sp,
+                                textAlign = TextAlign.Center
+                            )
+
+                            // QR Code image
+                            Box(
+                                modifier = Modifier
+                                    .size(if (showTwoColumns) 160.dp else 190.dp)
+                                    .background(Color.White, RoundedCornerShape(10.dp))
+                                    .border(2.dp, Color(0xFF555555), RoundedCornerShape(10.dp))
+                                    .padding(8.dp),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                if (qrBitmap != null) {
+                                    Image(
+                                        bitmap = qrBitmap,
+                                        contentDescription = "Web Yönetim QR Kodu",
+                                        modifier = Modifier.fillMaxSize()
+                                    )
+                                } else {
+                                    CircularProgressIndicator(color = RedPrimary, modifier = Modifier.size(32.dp))
+                                }
+                            }
+
+                            // Web Portal URL Link + Copy & Browser Buttons
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .background(Color(0xFF1E232A), RoundedCornerShape(8.dp))
+                                    .padding(horizontal = 10.dp, vertical = 6.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.SpaceBetween
+                            ) {
+                                Column(modifier = Modifier.weight(1f)) {
+                                    Text(stringResource(R.string.web_portal_url_label), color = Color.Gray, fontSize = 9.sp)
+                                    Text(
+                                        text = webPortalUrl,
+                                        color = Color(0xFF64B5F6),
+                                        fontSize = 11.sp,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis
+                                    )
+                                }
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    IconButton(
+                                        onClick = { copyToClipboard("Web Portalı", webPortalUrl) },
+                                        modifier = Modifier.size(32.dp)
+                                    ) {
+                                        Icon(Icons.Default.ContentCopy, contentDescription = "Kopyala", tint = Color(0xFF64B5F6), modifier = Modifier.size(16.dp))
+                                    }
+                                    IconButton(
+                                        onClick = {
+                                            try {
+                                                val browserIntent = Intent(Intent.ACTION_VIEW, Uri.parse(webPortalUrl))
+                                                context.startActivity(browserIntent)
+                                            } catch (e: Exception) {
+                                                Toast.makeText(context, "Tarayıcı açılamadı: $webPortalUrl", Toast.LENGTH_SHORT).show()
+                                            }
+                                        },
+                                        modifier = Modifier.size(32.dp)
+                                    ) {
+                                        Icon(Icons.Default.OpenInBrowser, contentDescription = "Aç", tint = Color.White, modifier = Modifier.size(17.dp))
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+
+                // Helper Card 5: Actions
+                val actionsCard = @Composable {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(10.dp)
+                    ) {
+                        Button(
+                            onClick = onContinue,
+                            modifier = Modifier
+                                .weight(1f)
+                                .height(44.dp),
+                            shape = RoundedCornerShape(8.dp),
+                            colors = ButtonDefaults.buttonColors(containerColor = RedPrimary)
+                        ) {
+                            Icon(Icons.Default.PlayArrow, contentDescription = null, tint = Color.White)
+                            Spacer(modifier = Modifier.width(6.dp))
+                            Text("Oynatma Listelerine Devam Et", fontSize = 13.sp, fontWeight = FontWeight.Bold)
+                        }
+                    }
+                }
+
+                if (showTwoColumns) {
+                    // Landscape / Wide screen layout: 2 side-by-side columns
+                    Row(
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .padding(top = 4.dp),
+                        horizontalArrangement = Arrangement.spacedBy(12.dp)
+                    ) {
+                        Column(
+                            modifier = Modifier
+                                .weight(1.05f)
+                                .fillMaxHeight()
+                                .verticalScroll(rememberScrollState()),
+                            verticalArrangement = Arrangement.spacedBy(10.dp)
+                        ) {
+                            accountCard()
+                            trialCard()
+                            credentialsCard()
+                            specsCard()
+                            actionsCard()
+                        }
+
+                        Column(
+                            modifier = Modifier
+                                .weight(0.95f)
+                                .fillMaxHeight()
+                                .verticalScroll(rememberScrollState()),
+                            verticalArrangement = Arrangement.spacedBy(10.dp)
+                        ) {
+                            qrPortalCard()
+                        }
+                    }
+                } else {
+                    // Portrait layout: Single neat vertical column with spacious scrolling
                     Column(
                         modifier = Modifier
                             .fillMaxSize()
-                            .padding(8.dp)
+                            .padding(top = 4.dp)
                             .verticalScroll(rememberScrollState()),
-                        horizontalAlignment = Alignment.CenterHorizontally,
-                        verticalArrangement = Arrangement.SpaceBetween
+                        verticalArrangement = Arrangement.spacedBy(12.dp)
                     ) {
-                        // Title
-                        Row(
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.Center
-                        ) {
-                            Icon(Icons.Default.QrCode2, contentDescription = null, tint = RedPrimary, modifier = Modifier.size(16.dp))
-                            Spacer(modifier = Modifier.width(4.dp))
-                            Text(
-                                text = stringResource(R.string.qr_code_title),
-                                fontWeight = FontWeight.Bold,
-                                color = Color.White,
-                                fontSize = 12.sp,
-                                maxLines = 1
-                            )
-                        }
-
-                        // QR Code Image in Center (scales nicely in landscape)
-                        Box(
-                            modifier = Modifier
-                                .weight(1f, fill = false)
-                                .aspectRatio(1f)
-                                .padding(vertical = 2.dp)
-                                .background(Color.White, RoundedCornerShape(8.dp))
-                                .border(1.5.dp, Color(0xFF555555), RoundedCornerShape(8.dp))
-                                .padding(6.dp),
-                            contentAlignment = Alignment.Center
-                        ) {
-                            if (qrBitmap != null) {
-                                Image(
-                                    bitmap = qrBitmap,
-                                    contentDescription = "Web Yönetim QR Kodu",
-                                    modifier = Modifier.fillMaxSize()
-                                )
-                            } else {
-                                CircularProgressIndicator(color = RedPrimary, modifier = Modifier.size(24.dp))
-                            }
-                        }
-
-                        // Web Portal URL Link + Copy & Browser Buttons
-                        Row(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .background(Color(0xFF1E232A), RoundedCornerShape(6.dp))
-                                .padding(horizontal = 6.dp, vertical = 3.dp),
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.SpaceBetween
-                        ) {
-                            Column(modifier = Modifier.weight(1f)) {
-                                Text(stringResource(R.string.web_portal_url_label), color = Color.Gray, fontSize = 8.sp)
-                                Text(
-                                    text = webPortalUrl,
-                                    color = Color(0xFF64B5F6),
-                                    fontSize = 10.sp,
-                                    maxLines = 1,
-                                    overflow = TextOverflow.Ellipsis
-                                )
-                            }
-                            IconButton(
-                                onClick = { copyToClipboard("Web Portalı", webPortalUrl) },
-                                modifier = Modifier.size(24.dp)
-                            ) {
-                                Icon(Icons.Default.ContentCopy, contentDescription = "Kopyala", tint = Color(0xFF64B5F6), modifier = Modifier.size(13.dp))
-                            }
-                            IconButton(
-                                onClick = {
-                                    try {
-                                        val browserIntent = Intent(Intent.ACTION_VIEW, Uri.parse(webPortalUrl))
-                                        context.startActivity(browserIntent)
-                                    } catch (e: Exception) {
-                                        Toast.makeText(context, "Tarayıcı açılamadı: $webPortalUrl", Toast.LENGTH_SHORT).show()
-                                    }
-                                },
-                                modifier = Modifier.size(24.dp)
-                            ) {
-                                Icon(Icons.Default.OpenInBrowser, contentDescription = "Aç", tint = Color.White, modifier = Modifier.size(14.dp))
-                            }
-                        }
+                        accountCard()
+                        trialCard()
+                        credentialsCard()
+                        specsCard()
+                        qrPortalCard()
+                        actionsCard()
+                        Spacer(modifier = Modifier.height(20.dp))
                     }
                 }
             }
@@ -700,11 +816,27 @@ fun DeviceInfoScreen(
             scrimColor = Color.Black.copy(alpha = 0.6f)
         ) {
             ProfileSettingsSheet(
+                onClose = { showProfileSheet = false },
                 onNavigateToAuth = {
                     showProfileSheet = false
                     onSignOut()
+                },
+                onOpenSupport = {
+                    showProfileSheet = false
+                    showSupportSheet = true
                 }
             )
+        }
+    }
+
+    if (showSupportSheet) {
+        ModalBottomSheet(
+            onDismissRequest = { showSupportSheet = false },
+            sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true),
+            containerColor = Color(0xFF1E232A),
+            scrimColor = Color.Black.copy(alpha = 0.6f)
+        ) {
+            SupportTicketsSheet(onClose = { showSupportSheet = false })
         }
     }
 }

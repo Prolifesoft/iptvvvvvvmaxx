@@ -3,9 +3,9 @@ package com.example.model
 import android.content.Context
 import android.content.Intent
 import android.net.Uri
-import android.os.Build
 import android.util.Log
 import androidx.core.content.FileProvider
+import com.example.BuildConfig
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -16,6 +16,7 @@ import java.io.FileOutputStream
 import java.io.OutputStreamWriter
 import java.net.HttpURLConnection
 import java.net.URL
+import java.util.zip.ZipFile
 
 data class UpdateInfo(
     val status: String,
@@ -65,15 +66,11 @@ object UpdateManager {
         _isChecking.value = true
         _errorMsg.value = null
         _upToDateMessage.value = null
-        try {
-            val packageInfo = context.packageManager.getPackageInfo(context.packageName, 0)
-            val currentVersionCode = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
-                packageInfo.longVersionCode.toInt()
-            } else {
-                @Suppress("DEPRECATION")
-                packageInfo.versionCode
-            }
 
+        val currentVersionCode = BuildConfig.VERSION_CODE
+        val currentVersionName = BuildConfig.VERSION_NAME
+
+        try {
             val url = URL(ENDPOINT)
             val conn = (url.openConnection() as HttpURLConnection).apply {
                 requestMethod = "POST"
@@ -81,10 +78,12 @@ object UpdateManager {
                 readTimeout = 8000
                 doOutput = true
                 setRequestProperty("Content-Type", "application/json; charset=UTF-8")
+                setRequestProperty("Accept", "application/json")
             }
 
             val params = JSONObject().apply {
                 put("version_code", currentVersionCode)
+                put("version_name", currentVersionName)
             }
             val payload = JSONObject().apply {
                 put("jsonrpc", "2.0")
@@ -92,72 +91,108 @@ object UpdateManager {
                 put("params", params)
             }
 
-            OutputStreamWriter(conn.outputStream).use { it.write(payload.toString()) }
-            val code = conn.responseCode
+            OutputStreamWriter(conn.outputStream, Charsets.UTF_8).use { it.write(payload.toString()) }
+            val responseCode = conn.responseCode
 
-            if (code in 200..299) {
-                val responseStr = conn.inputStream.bufferedReader().use { it.readText() }
+            if (responseCode in 200..299) {
+                val responseStr = conn.inputStream.bufferedReader(Charsets.UTF_8).use { it.readText() }
                 conn.disconnect()
+
+                if (responseStr.isBlank()) {
+                    if (manual) {
+                        _upToDateMessage.value = "Uygulamanız güncel (v$currentVersionName)"
+                    }
+                    return@withContext
+                }
+
                 val rootJson = JSONObject(responseStr)
                 val resultObj = rootJson.optJSONObject("result") ?: rootJson
 
                 val status = resultObj.optString("status", "success")
-                val updateAvailable = resultObj.optBoolean("update_available", false)
+                val serverUpdateAvailable = resultObj.optBoolean("update_available", false)
                 val forceUpdate = resultObj.optBoolean("force_update", false)
-                val versionName = resultObj.optString("version_name", "1.0.0")
-                val versionCode = resultObj.optInt("version_code", currentVersionCode)
+                val serverVersionName = resultObj.optString("version_name", currentVersionName)
+                val serverVersionCode = resultObj.optInt("version_code", currentVersionCode)
                 val rawReleaseNotes = resultObj.optString("release_notes", "")
                 val releaseNotes = cleanHtml(rawReleaseNotes)
-                val downloadUrl = resultObj.optString("download_url", "")
+                val downloadUrl = resultObj.optString("download_url", "").trim()
 
-                val info = UpdateInfo(
-                    status = status,
-                    updateAvailable = updateAvailable,
-                    forceUpdate = forceUpdate,
-                    versionName = versionName,
-                    versionCode = versionCode,
-                    releaseNotes = releaseNotes,
-                    downloadUrl = downloadUrl
-                )
+                // Loop prevention: only consider update available if server version is strictly greater
+                val isActuallyNewer = serverVersionCode > currentVersionCode
+                val updateAvailable = serverUpdateAvailable && isActuallyNewer && downloadUrl.isNotBlank()
 
-                _updateInfo.value = info
-                if (!updateAvailable && manual) {
-                    _upToDateMessage.value = "Uygulamanız güncel"
+                if (updateAvailable) {
+                    val info = UpdateInfo(
+                        status = status,
+                        updateAvailable = true,
+                        forceUpdate = forceUpdate,
+                        versionName = serverVersionName,
+                        versionCode = serverVersionCode,
+                        releaseNotes = releaseNotes.ifBlank { "Yeni sürüm yayınlandı." },
+                        downloadUrl = downloadUrl
+                    )
+                    _updateInfo.value = info
+                } else {
+                    _updateInfo.value = null
+                    if (manual) {
+                        _upToDateMessage.value = "Uygulamanız güncel (v$currentVersionName)"
+                    }
                 }
             } else {
-                val errorText = when (code) {
-                    401 -> "Yetkilendirme hatası (401)"
-                    403 -> "Erişim reddedildi (403)"
-                    404 -> "Güncelleme sunucusu bulunamadı (404)"
-                    500 -> "Sunucu hatası (500)"
-                    else -> "Bağlantı hatası ($code)"
+                conn.disconnect()
+                if (manual) {
+                    val message = when (responseCode) {
+                        401 -> "Yetkilendirme hatası (401). Lütfen tekrar giriş yapın."
+                        403 -> "Erişim engellendi (403)."
+                        404 -> "Güncelleme servisine ulaşılamadı (404)."
+                        500 -> "Sunucu hatası oluştu (500). Lütfen daha sonra tekrar deneyin."
+                        else -> "Güncelleme kontrolü başarısız oldu (HTTP $responseCode)."
+                    }
+                    _errorMsg.value = message
                 }
-                _errorMsg.value = errorText
             }
         } catch (e: Exception) {
-            e.printStackTrace()
-            _errorMsg.value = "Ağ bağlantı hatası oluştu. Lütfen internet bağlantınızı kontrol edin."
+            Log.e(TAG, "Update check network error: ${e.message}")
+            if (manual) {
+                _errorMsg.value = "Güncelleme sunucusuna bağlanılamadı. Lütfen internet bağlantınızı kontrol edin."
+            }
         } finally {
             _isChecking.value = false
         }
     }
 
-    private fun cleanHtml(html: String): String {
-        if (html.isBlank()) return ""
-        var cleaned = html.replace(Regex("<[^>]*>"), "")
-        cleaned = cleaned.replace("&nbsp;", " ")
+    private fun cleanHtml(raw: String): String {
+        if (raw.isBlank()) return ""
+        var text = raw
+            // Remove Odoo data-oe attributes and custom attributes
+            .replace(Regex("""data-oe-[a-zA-Z0-9_-]+="[^"]*""""), "")
+            .replace(Regex("""data-[a-zA-Z0-9_-]+="[^"]*""""), "")
+            // Convert line breaks and paragraph ends to newlines
+            .replace(Regex("(?i)<br\\s*/?>"), "\n")
+            .replace(Regex("(?i)</p>"), "\n")
+            .replace(Regex("(?i)</li>"), "\n")
+            // Remove remaining HTML tags
+            .replace(Regex("<[^>]*>"), "")
+            // Clean common HTML entities
+            .replace("&nbsp;", " ")
             .replace("&amp;", "&")
             .replace("&lt;", "<")
             .replace("&gt;", ">")
             .replace("&quot;", "\"")
             .replace("&#39;", "'")
+            .replace("&apos;", "'")
             .replace("&ouml;", "ö").replace("&Ouml;", "Ö")
             .replace("&uuml;", "ü").replace("&Uuml;", "Ü")
-            .replace("&İ;", "İ").replace("&ı;", "ı")
-            .replace("&ş;", "ş").replace("&Ş;", "Ş")
-            .replace("&ğ;", "ğ").replace("&Ğ;", "Ğ")
-            .replace("&ç;", "ç").replace("&Ç;", "Ç")
-        return cleaned.trim()
+            .replace("&ccedil;", "ç").replace("&Ccedil;", "Ç")
+            .replace("&icirc;", "î").replace("&Icirc;", "Î")
+            .replace("&eacute;", "é").replace("&Eacute;", "É")
+            .replace("&aring;", "å")
+            .replace("&copy;", "©")
+            .replace("&#160;", " ")
+            .replace(Regex("[ \t]+"), " ")
+            .replace(Regex("\n\\s*\n+"), "\n")
+            .trim()
+        return text
     }
 
     suspend fun downloadAndInstallApk(context: Context, downloadUrl: String) = withContext(Dispatchers.IO) {
@@ -165,14 +200,35 @@ object UpdateManager {
             _errorMsg.value = "Geçersiz indirme bağlantısı."
             return@withContext
         }
+
         _isDownloading.value = true
         _downloadProgress.value = 0
+
         try {
             val url = URL(downloadUrl)
             val conn = (url.openConnection() as HttpURLConnection).apply {
-                connectTimeout = 15000
-                readTimeout = 15000
+                connectTimeout = 20000
+                readTimeout = 25000
+                instanceFollowRedirects = true
+                setRequestProperty("User-Agent", "Mozilla/5.0 Android MAXX-PLAYER")
             }
+
+            val responseCode = conn.responseCode
+            if (responseCode !in 200..299) {
+                conn.disconnect()
+                _isDownloading.value = false
+                _errorMsg.value = "APK indirilemedi (HTTP $responseCode). Bağlantıyı kontrol edin."
+                return@withContext
+            }
+
+            val contentType = conn.contentType ?: ""
+            if (contentType.contains("text/html", ignoreCase = true) || contentType.startsWith("text/", ignoreCase = true)) {
+                conn.disconnect()
+                _isDownloading.value = false
+                _errorMsg.value = "İndirilen dosya APK yerine HTML sayfası döndürdü. Lütfen indirme bağlantısını kontrol edin."
+                return@withContext
+            }
+
             val fileLength = conn.contentLength
             val inputStream = conn.inputStream
 
@@ -182,33 +238,52 @@ object UpdateManager {
             if (apkFile.exists()) apkFile.delete()
 
             val outputStream = FileOutputStream(apkFile)
-            val data = ByteArray(4096)
+            val data = ByteArray(8192)
             var total: Long = 0
             var count: Int
+
             while (inputStream.read(data).also { count = it } != -1) {
                 total += count.toLong()
                 if (fileLength > 0) {
-                    val progress = ((total * 100) / fileLength).toInt()
+                    val progress = ((total * 100) / fileLength).toInt().coerceIn(0, 99)
                     _downloadProgress.value = progress
                 }
                 outputStream.write(data, 0, count)
             }
+
             outputStream.flush()
             outputStream.close()
             inputStream.close()
             conn.disconnect()
 
-            if (!apkFile.exists() || apkFile.length() < 1000) {
-                _errorMsg.value = "İndirilen APK dosyası geçersiz veya çok küçük."
+            // Verification of downloaded file
+            if (!apkFile.exists() || apkFile.length() < 5000) {
+                _errorMsg.value = "İndirilen APK dosyası eksik veya boş."
                 _isDownloading.value = false
                 return@withContext
             }
 
-            // Verify zip/apk header (PK - 0x50, 0x4B)
+            // Verify ZIP magic header (0x50, 0x4B)
             val header = ByteArray(4)
             apkFile.inputStream().use { it.read(header) }
             if (header[0] != 0x50.toByte() || header[1] != 0x4B.toByte()) {
-                _errorMsg.value = "İndirilen dosya geçerli bir APK değil (Lütfen Odoo'da doğrudan APK dosya bağlantısını girdiğinizden emin olun)."
+                _errorMsg.value = "İndirilen dosya geçerli bir APK paketi değil (ZIP başlığı eksik)."
+                _isDownloading.value = false
+                return@withContext
+            }
+
+            // Verify AndroidManifest.xml exists inside the APK archive
+            var hasManifest = false
+            try {
+                ZipFile(apkFile).use { zip ->
+                    hasManifest = zip.getEntry("AndroidManifest.xml") != null
+                }
+            } catch (e: Exception) {
+                hasManifest = false
+            }
+
+            if (!hasManifest) {
+                _errorMsg.value = "İndirilen dosya geçerli bir Android APK paketi içermiyor (AndroidManifest.xml bulunamadı)."
                 _isDownloading.value = false
                 return@withContext
             }
@@ -220,9 +295,9 @@ object UpdateManager {
                 installApk(context, apkFile)
             }
         } catch (e: Exception) {
-            e.printStackTrace()
+            Log.e(TAG, "APK download error: ${e.message}")
             _isDownloading.value = false
-            _errorMsg.value = "APK indirilirken hata oluştu: ${e.localizedMessage}"
+            _errorMsg.value = "APK indirilirken hata oluştu: ${e.localizedMessage ?: "Bilinmeyen hata"}"
         }
     }
 
@@ -236,14 +311,14 @@ object UpdateManager {
             val intent = Intent(Intent.ACTION_VIEW).apply {
                 setDataAndType(uri, "application/vnd.android.package-archive")
                 addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
-                addFlags(Intent.FLAG_GRANT_WRITE_URI_PERMISSION)
-                clipData = android.content.ClipData.newRawUri("", uri)
                 addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                clipData = android.content.ClipData.newRawUri("update_apk", uri)
             }
             context.startActivity(intent)
         } catch (e: Exception) {
-            e.printStackTrace()
-            _errorMsg.value = "Kurulum başlatılamadı: ${e.localizedMessage}"
+            Log.e(TAG, "APK install error: ${e.message}")
+            _errorMsg.value = "Kurulum başlatılamadı: ${e.localizedMessage ?: "Paket yükleyici açılamadı"}"
         }
     }
 }
+

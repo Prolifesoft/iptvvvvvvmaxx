@@ -257,8 +257,6 @@ fun SettingsSheetContent(onClose: () -> Unit, onOpenSupport: () -> Unit = {}) {
         })
 
         Text(stringResource(R.string.settings_share), fontSize = 12.sp, color = Color.Gray, modifier = Modifier.padding(vertical = 8.dp))
-        SettingsItem(icon = Icons.Default.RateReview, title = stringResource(R.string.settings_review), iconTint = Color(0xFFFFA726), onClick = { showRateDialog = true })
-        SettingsItem(icon = Icons.Default.Star, title = stringResource(R.string.settings_rate_us), iconTint = Color(0xFFEF5350), onClick = { showRateDialog = true })
         SettingsItem(icon = Icons.Default.Share, title = stringResource(R.string.settings_share_family), iconTint = Color(0xFFBDBDBD), onClick = {
             try {
                 val shareIntent = Intent(Intent.ACTION_SEND).apply {
@@ -273,11 +271,6 @@ fun SettingsSheetContent(onClose: () -> Unit, onOpenSupport: () -> Unit = {}) {
 
         Text(stringResource(R.string.settings_help), fontSize = 12.sp, color = Color.Gray, modifier = Modifier.padding(vertical = 8.dp))
         SettingsItem(icon = Icons.Default.Help, title = stringResource(R.string.settings_faq), iconTint = Color(0xFFAB47BC), onClick = { showFaqDialog = true })
-
-        Text(stringResource(R.string.settings_contact), fontSize = 12.sp, color = Color.Gray, modifier = Modifier.padding(vertical = 8.dp))
-        SettingsItem(icon = Icons.Default.Report, title = stringResource(R.string.settings_report), iconTint = Color(0xFFFF7043), onClick = { onClose(); onOpenSupport() })
-        SettingsItem(icon = Icons.Default.Add, title = stringResource(R.string.settings_request), iconTint = Color(0xFFEF5350), onClick = { onClose(); onOpenSupport() })
-        SettingsItem(icon = Icons.Default.Build, title = stringResource(R.string.settings_support), iconTint = Color(0xFF42A5F5), onClick = { onClose(); onOpenSupport() })
     }
 
     if (showFaqDialog) {
@@ -495,7 +488,7 @@ fun ProfileSettingsSheet(
                         Column(modifier = Modifier.weight(1f)) {
                             Text(stringResource(R.string.google_account_connected), fontSize = 11.sp, color = Color(0xFF90CAF9))
                             Text(
-                                currentUser?.email ?: currentUser?.name ?: "ncem0332006@gmail.com",
+                                currentUser?.email ?: currentUser?.name ?: "Giriş Yapılmadı",
                                 fontSize = 14.sp,
                                 fontWeight = FontWeight.Bold,
                                 color = Color.White
@@ -648,24 +641,11 @@ fun ProfileSettingsSheet(
                         onClick = {
                             coroutineScope.launch {
                                 com.example.model.UpdateManager.checkForUpdates(context, manual = true)
-                                onClose()
                             }
                         }
                     )
 
-                    // Review & Rate & Share
-                    SettingsItem(
-                        icon = Icons.Default.RateReview,
-                        title = stringResource(R.string.settings_review),
-                        iconTint = Color(0xFFFFA726),
-                        onClick = { showRateDialog = true }
-                    )
-                    SettingsItem(
-                        icon = Icons.Default.Star,
-                        title = stringResource(R.string.settings_rate_us),
-                        iconTint = Color(0xFFEF5350),
-                        onClick = { showRateDialog = true }
-                    )
+                    // Share & FAQ
                     SettingsItem(
                         icon = Icons.Default.Share,
                         title = stringResource(R.string.settings_share_family),
@@ -691,24 +671,20 @@ fun ProfileSettingsSheet(
                         onClick = { showFaqDialog = true }
                     )
 
-                    // Support / Report / Request
+                    // Support
                     SettingsItem(
-                        icon = Icons.Default.Report,
-                        title = stringResource(R.string.settings_report),
-                        iconTint = Color(0xFFFF7043),
-                        onClick = { onClose(); onOpenSupport() }
-                    )
-                    SettingsItem(
-                        icon = Icons.Default.Add,
-                        title = stringResource(R.string.settings_request),
-                        iconTint = Color(0xFFEF5350),
-                        onClick = { onClose(); onOpenSupport() }
-                    )
-                    SettingsItem(
-                        icon = Icons.Default.Build,
+                        icon = Icons.Default.SupportAgent,
                         title = stringResource(R.string.settings_support),
                         iconTint = Color(0xFF42A5F5),
-                        onClick = { onClose(); onOpenSupport() }
+                        onClick = {
+                            val devId = com.example.model.DeviceManager.getDeviceId()
+                            if (devId.isBlank()) {
+                                Toast.makeText(context, "Cihaz kimliği bulunamadı, lütfen önce cihazınızı eşleştirin.", Toast.LENGTH_SHORT).show()
+                            } else {
+                                onOpenSupport()
+                                showSupportInline = true
+                            }
+                        }
                     )
 
                     Spacer(modifier = Modifier.height(12.dp))
@@ -833,21 +809,8 @@ fun ProfileSettingsSheet(
                     onClick = {
                         coroutineScope.launch {
                             com.example.model.UpdateManager.checkForUpdates(context, manual = true)
-                            onClose()
                         }
                     }
-                )
-                SettingsItem(
-                    icon = Icons.Default.RateReview,
-                    title = stringResource(R.string.settings_review),
-                    iconTint = Color(0xFFFFA726),
-                    onClick = { showRateDialog = true }
-                )
-                SettingsItem(
-                    icon = Icons.Default.Star,
-                    title = stringResource(R.string.settings_rate_us),
-                    iconTint = Color(0xFFEF5350),
-                    onClick = { showRateDialog = true }
                 )
                 SettingsItem(
                     icon = Icons.Default.Share,
@@ -857,7 +820,7 @@ fun ProfileSettingsSheet(
                         try {
                             val shareIntent = Intent(Intent.ACTION_SEND).apply {
                                 type = "text/plain"
-                               putExtra(Intent.EXTRA_TEXT, context.getString(R.string.share_text))
+                                putExtra(Intent.EXTRA_TEXT, context.getString(R.string.share_text))
                             }
                             context.startActivity(Intent.createChooser(shareIntent, context.getString(R.string.settings_share_family)))
                         } catch (e: Exception) {
@@ -872,22 +835,18 @@ fun ProfileSettingsSheet(
                     onClick = { showFaqDialog = true }
                 )
                 SettingsItem(
-                    icon = Icons.Default.Report,
-                    title = stringResource(R.string.settings_report),
-                    iconTint = Color(0xFFFF7043),
-                    onClick = { onClose(); onOpenSupport() }
-                )
-                SettingsItem(
-                    icon = Icons.Default.Add,
-                    title = stringResource(R.string.settings_request),
-                    iconTint = Color(0xFFEF5350),
-                    onClick = { onClose(); onOpenSupport() }
-                )
-                SettingsItem(
-                    icon = Icons.Default.Build,
+                    icon = Icons.Default.SupportAgent,
                     title = stringResource(R.string.settings_support),
                     iconTint = Color(0xFF42A5F5),
-                    onClick = { onClose(); onOpenSupport() }
+                    onClick = {
+                        val devId = com.example.model.DeviceManager.getDeviceId()
+                        if (devId.isBlank()) {
+                            Toast.makeText(context, "Cihaz kimliği bulunamadı, lütfen önce cihazınızı eşleştirin.", Toast.LENGTH_SHORT).show()
+                        } else {
+                            onOpenSupport()
+                            showSupportInline = true
+                        }
+                    }
                 )
 
                 HorizontalDivider(color = Color.DarkGray, modifier = Modifier.padding(vertical = 12.dp))
@@ -905,7 +864,7 @@ fun ProfileSettingsSheet(
                     Spacer(modifier = Modifier.width(12.dp))
                     Column(modifier = Modifier.weight(1f)) {
                         Text(stringResource(R.string.google_account_connected), fontSize = 11.sp, color = Color.Gray)
-                        Text(currentUser?.email ?: currentUser?.name ?: "ncem0332006@gmail.com", fontSize = 14.sp, fontWeight = FontWeight.Bold, color = Color.White)
+                        Text(currentUser?.email ?: currentUser?.name ?: "Giriş Yapılmadı", fontSize = 14.sp, fontWeight = FontWeight.Bold, color = Color.White)
                     }
                 }
                 Spacer(modifier = Modifier.height(12.dp))
@@ -1044,17 +1003,15 @@ fun ProfileSettingsSheet(
 fun SupportTicketsSheet(onClose: () -> Unit) {
     val context = LocalContext.current
     val tickets by com.example.model.SupportRepository.tickets.collectAsState()
+    val isSyncing by com.example.model.SupportRepository.isSyncing.collectAsState()
     var newTitle by remember { mutableStateOf("") }
     var newMessage by remember { mutableStateOf("") }
     var showNewTicketForm by remember { mutableStateOf(false) }
+    var isSubmitting by remember { mutableStateOf(false) }
 
     val scope = rememberCoroutineScope()
     LaunchedEffect(Unit) {
-        scope.launch {
-            try {
-                com.example.model.SupportRepository.syncTicketsFromOdoo()
-            } catch (e: Exception) {}
-        }
+        com.example.model.SupportRepository.syncTicketsFromOdoo()
     }
 
     Column(
@@ -1078,6 +1035,14 @@ fun SupportTicketsSheet(onClose: () -> Unit) {
                     fontWeight = FontWeight.Bold,
                     color = Color.White
                 )
+                if (isSyncing) {
+                    Spacer(modifier = Modifier.width(8.dp))
+                    CircularProgressIndicator(
+                        modifier = Modifier.size(16.dp),
+                        strokeWidth = 2.dp,
+                        color = Color(0xFF42A5F5)
+                    )
+                }
             }
             IconButton(onClick = onClose) {
                 Icon(Icons.Default.Close, contentDescription = stringResource(R.string.close_desc), tint = Color.Gray)
@@ -1099,7 +1064,8 @@ fun SupportTicketsSheet(onClose: () -> Unit) {
                         onValueChange = { newTitle = it },
                         placeholder = { Text(stringResource(R.string.ticket_title_label), color = Color.Gray, fontSize = 12.sp) },
                         modifier = Modifier.fillMaxWidth(),
-                        colors = OutlinedTextFieldDefaults.colors(focusedBorderColor = Color(0xFF42A5F5), unfocusedBorderColor = Color.DarkGray)
+                        colors = OutlinedTextFieldDefaults.colors(focusedBorderColor = Color(0xFF42A5F5), unfocusedBorderColor = Color.DarkGray),
+                        enabled = !isSubmitting
                     )
                     Spacer(modifier = Modifier.height(8.dp))
                     OutlinedTextField(
@@ -1107,26 +1073,50 @@ fun SupportTicketsSheet(onClose: () -> Unit) {
                         onValueChange = { newMessage = it },
                         placeholder = { Text(stringResource(R.string.ticket_msg_label), color = Color.Gray, fontSize = 12.sp) },
                         modifier = Modifier.fillMaxWidth().height(90.dp),
-                        colors = OutlinedTextFieldDefaults.colors(focusedBorderColor = Color(0xFF42A5F5), unfocusedBorderColor = Color.DarkGray)
+                        colors = OutlinedTextFieldDefaults.colors(focusedBorderColor = Color(0xFF42A5F5), unfocusedBorderColor = Color.DarkGray),
+                        enabled = !isSubmitting
                     )
                     Spacer(modifier = Modifier.height(8.dp))
-                    Row(horizontalArrangement = Arrangement.End, modifier = Modifier.fillMaxWidth()) {
-                        TextButton(onClick = { showNewTicketForm = false }) {
+                    Row(
+                        horizontalArrangement = Arrangement.End,
+                        verticalAlignment = Alignment.CenterVertically,
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        TextButton(
+                            onClick = { showNewTicketForm = false },
+                            enabled = !isSubmitting
+                        ) {
                             Text(stringResource(R.string.close_desc), color = Color.Gray)
                         }
                         Spacer(modifier = Modifier.width(8.dp))
                         Button(
                             onClick = {
                                 if (newTitle.isNotBlank() && newMessage.isNotBlank()) {
-                                    com.example.model.SupportRepository.createTicket(newTitle, null, newMessage)
-                                    newTitle = ""
-                                    newMessage = ""
-                                    showNewTicketForm = false
-                                    Toast.makeText(context, context.getString(R.string.report_sent), Toast.LENGTH_SHORT).show()
+                                    isSubmitting = true
+                                    scope.launch {
+                                        val result = com.example.model.SupportRepository.createTicketSuspend(newTitle.trim(), null, newMessage.trim())
+                                        isSubmitting = false
+                                        if (result.isSuccess) {
+                                            newTitle = ""
+                                            newMessage = ""
+                                            showNewTicketForm = false
+                                            Toast.makeText(context, context.getString(R.string.report_sent), Toast.LENGTH_SHORT).show()
+                                        } else {
+                                            val err = result.exceptionOrNull()?.message ?: "Bilinmeyen hata"
+                                            Toast.makeText(context, "Destek talebi iletilemedi: $err", Toast.LENGTH_LONG).show()
+                                        }
+                                    }
+                                } else {
+                                    Toast.makeText(context, "Lütfen başlık ve mesaj giriniz.", Toast.LENGTH_SHORT).show()
                                 }
                             },
-                            colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF42A5F5))
+                            colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF42A5F5)),
+                            enabled = !isSubmitting
                         ) {
+                            if (isSubmitting) {
+                                CircularProgressIndicator(modifier = Modifier.size(16.dp), color = Color.White, strokeWidth = 2.dp)
+                                Spacer(modifier = Modifier.width(6.dp))
+                            }
                             Text(stringResource(R.string.report_send), color = Color.White, fontWeight = FontWeight.Bold)
                         }
                     }
@@ -1148,7 +1138,12 @@ fun SupportTicketsSheet(onClose: () -> Unit) {
 
         if (tickets.isEmpty()) {
             Box(modifier = Modifier.fillMaxWidth().weight(1f), contentAlignment = Alignment.Center) {
-                Text(stringResource(R.string.uncategorized), color = Color.Gray)
+                Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                    Icon(Icons.Default.SupportAgent, contentDescription = null, tint = Color.Gray, modifier = Modifier.size(48.dp))
+                    Spacer(modifier = Modifier.height(8.dp))
+                    Text("Henüz bir destek talebiniz bulunmuyor.", color = Color.Gray, fontSize = 14.sp)
+                    Text("Yeni talep oluşturmak için yukarıdaki butonu kullanın.", color = Color.DarkGray, fontSize = 12.sp)
+                }
             }
         } else {
             LazyColumn(
@@ -1200,7 +1195,7 @@ fun SupportTicketsSheet(onClose: () -> Unit) {
                                         .fillMaxWidth()
                                         .background(Color(0xFF263238), RoundedCornerShape(6.dp))
                                         .padding(8.dp)
-                                ) {
+                                    ) {
                                     Icon(Icons.Default.SupportAgent, contentDescription = null, tint = Color(0xFF69F0AE), modifier = Modifier.size(18.dp))
                                     Spacer(modifier = Modifier.width(8.dp))
                                     Column {

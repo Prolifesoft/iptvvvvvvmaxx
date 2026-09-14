@@ -3,8 +3,9 @@ package com.example.model
 import android.util.Log
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.withContext
 import org.json.JSONObject
 import java.io.OutputStreamWriter
@@ -27,128 +28,178 @@ data class SupportTicket(
 
 object SupportRepository {
     private const val TAG = "SupportRepository"
-    private val _tickets = MutableStateFlow<List<SupportTicket>>(emptyList())
-    val tickets: MutableStateFlow<List<SupportTicket>> = _tickets
+    private const val CREATE_ENDPOINT = "https://maxxbilisim.com/api/v1/support/create"
+    private const val GET_ENDPOINT = "https://maxxbilisim.com/api/v1/support/get"
 
-    val unreadNotification = MutableStateFlow<SupportTicket?>(null)
+    private val _tickets = MutableStateFlow<List<SupportTicket>>(emptyList())
+    val tickets: StateFlow<List<SupportTicket>> = _tickets
+
+    private val _unreadNotification = MutableStateFlow<SupportTicket?>(null)
+    val unreadNotification: StateFlow<SupportTicket?> = _unreadNotification
+
+    private val _isSyncing = MutableStateFlow(false)
+    val isSyncing: StateFlow<Boolean> = _isSyncing
+
+    private val _lastError = MutableStateFlow<String?>(null)
+    val lastError: StateFlow<String?> = _lastError
+
+    // Deduplication tracker: prevents repeatedly notifying the same admin reply
+    private val notifiedReplyKeys = mutableSetOf<String>()
 
     private fun getCurrentTime(): String {
         val sdf = SimpleDateFormat("dd.MM.yyyy HH:mm", Locale.getDefault())
         return sdf.format(Date())
     }
 
-    fun createTicket(title: String, channelName: String?, message: String) {
-        val newId = (System.currentTimeMillis() % 100000).toString()
-        val newTicket = SupportTicket(
-            id = newId,
-            title = title,
-            channelName = channelName,
-            message = message,
-            status = "Açık",
-            statusCode = "open",
-            adminReply = null,
-            timestamp = getCurrentTime()
-        )
-
+    fun createTicket(
+        title: String,
+        channelName: String?,
+        message: String
+    ) {
         CoroutineScope(Dispatchers.IO).launch {
-            sendTicketToOdoo(newTicket)
+            createTicketSuspend(title, channelName, message)
         }
     }
 
-    private suspend fun sendTicketToOdoo(ticket: SupportTicket) = withContext(Dispatchers.IO) {
+    suspend fun createTicketSuspend(
+        title: String,
+        channelName: String?,
+        message: String
+    ): Result<String> = withContext(Dispatchers.IO) {
+        val deviceId = DeviceManager.getDeviceId()
+        val deviceKey = DeviceManager.getDeviceKey()
+
+        if (deviceId.isBlank() || deviceKey.isBlank()) {
+            return@withContext Result.failure(Exception("Cihaz kimliği bulunamadı. Lütfen cihazınızı portal üzerinden eşleştirin."))
+        }
+
         try {
-            val endpoint = "https://maxxbilisim.com/api/v1/support/create"
-            val url = URL(endpoint)
+            val url = URL(CREATE_ENDPOINT)
             val conn = (url.openConnection() as HttpURLConnection).apply {
                 requestMethod = "POST"
-                connectTimeout = 5000
-                readTimeout = 5000
+                connectTimeout = 8000
+                readTimeout = 8000
                 doOutput = true
                 setRequestProperty("Content-Type", "application/json; charset=UTF-8")
+                setRequestProperty("Accept", "application/json")
             }
+
             val params = JSONObject().apply {
-                put("device_id", DeviceManager.getDeviceId())
-                put("device_key", DeviceManager.getDeviceKey())
-                put("ticket_id", ticket.id)
-                put("title", ticket.title)
-                put("channel_name", ticket.channelName ?: "")
-                put("message", ticket.message)
-                put("timestamp", ticket.timestamp)
+                put("device_id", deviceId)
+                put("device_key", deviceKey)
+                put("title", title.trim())
+                put("channel_name", if (channelName.isNullOrBlank()) "Genel" else channelName.trim())
+                put("message", message.trim())
             }
+
             val payload = JSONObject().apply {
                 put("jsonrpc", "2.0")
                 put("method", "call")
                 put("params", params)
             }
-            OutputStreamWriter(conn.outputStream).use { it.write(payload.toString()) }
-            val code = conn.responseCode
-            if (code in 200..299) {
-                val responseStr = conn.inputStream.bufferedReader().use { it.readText() }
+
+            OutputStreamWriter(conn.outputStream, Charsets.UTF_8).use { it.write(payload.toString()) }
+            val responseCode = conn.responseCode
+
+            if (responseCode in 200..299) {
+                val responseStr = conn.inputStream.bufferedReader(Charsets.UTF_8).use { it.readText() }
                 conn.disconnect()
+
                 val rootJson = JSONObject(responseStr)
-                val resultObj = rootJson.optJSONObject("result")
-                val status = resultObj?.optString("status") ?: rootJson.optString("status")
-                if (status == "success") {
+                val resultObj = rootJson.optJSONObject("result") ?: rootJson
+                val status = resultObj.optString("status")
+
+                if (status.equals("success", ignoreCase = true) || resultObj.optBoolean("success", false)) {
+                    // Sync tickets immediately to update list from server
                     syncTicketsFromOdoo()
+                    Result.success(resultObj.optString("message", "Talebiniz başarıyla iletildi."))
                 } else {
-                    Log.w(TAG, "Support ticket creation not successful")
+                    val errorDesc = resultObj.optString("message", resultObj.optString("error", "Destek talebi oluşturulamadı."))
+                    Result.failure(Exception(errorDesc))
                 }
             } else {
                 conn.disconnect()
-                Log.w(TAG, "Support ticket HTTP error")
+                val message = when (responseCode) {
+                    401 -> "Yetkilendirme hatası (401). Lütfen tekrar giriş yapın."
+                    403 -> "Erişim engellendi (403)."
+                    404 -> "Destek servisi bulunamadı (404)."
+                    500 -> "Sunucu hatası oluştu (500). Lütfen daha sonra tekrar deneyin."
+                    else -> "Sunucu hatası oluştu (HTTP $responseCode)."
+                }
+                Result.failure(Exception(message))
             }
         } catch (e: Exception) {
-            Log.e(TAG, "Error sending support ticket to Odoo")
+            Log.e(TAG, "Support ticket creation failed: ${e.message}")
+            Result.failure(Exception("Sunucuya bağlanılamadı. Lütfen internet bağlantınızı kontrol edin."))
         }
     }
 
-    suspend fun syncTicketsFromOdoo() = withContext(Dispatchers.IO) {
+    suspend fun syncTicketsFromOdoo(): Result<List<SupportTicket>> = withContext(Dispatchers.IO) {
+        val deviceId = DeviceManager.getDeviceId()
+        val deviceKey = DeviceManager.getDeviceKey()
+
+        if (deviceId.isBlank() || deviceKey.isBlank()) {
+            return@withContext Result.failure(Exception("Cihaz kimliği bulunamadı."))
+        }
+
+        _isSyncing.value = true
+        _lastError.value = null
+
         try {
-            val endpoint = "https://maxxbilisim.com/api/v1/support/get"
-            val url = URL(endpoint)
+            val url = URL(GET_ENDPOINT)
             val conn = (url.openConnection() as HttpURLConnection).apply {
                 requestMethod = "POST"
-                connectTimeout = 5000
-                readTimeout = 5000
+                connectTimeout = 8000
+                readTimeout = 8000
                 doOutput = true
                 setRequestProperty("Content-Type", "application/json; charset=UTF-8")
+                setRequestProperty("Accept", "application/json")
             }
+
             val params = JSONObject().apply {
-                put("device_id", DeviceManager.getDeviceId())
-                put("device_key", DeviceManager.getDeviceKey())
+                put("device_id", deviceId)
+                put("device_key", deviceKey)
             }
+
             val payload = JSONObject().apply {
                 put("jsonrpc", "2.0")
                 put("method", "call")
                 put("params", params)
             }
-            OutputStreamWriter(conn.outputStream).use { it.write(payload.toString()) }
-            val code = conn.responseCode
-            if (code in 200..299) {
-                val responseStr = conn.inputStream.bufferedReader().use { it.readText() }
-                conn.disconnect()
-                val rootJson = JSONObject(responseStr)
-                val resultObj = rootJson.optJSONObject("result")
-                val status = resultObj?.optString("status") ?: rootJson.optString("status")
 
-                if (status == "success" || resultObj != null) {
-                    val json = resultObj ?: rootJson
-                    val ticketsArray = json.optJSONArray("tickets")
+            OutputStreamWriter(conn.outputStream, Charsets.UTF_8).use { it.write(payload.toString()) }
+            val responseCode = conn.responseCode
+
+            if (responseCode in 200..299) {
+                val responseStr = conn.inputStream.bufferedReader(Charsets.UTF_8).use { it.readText() }
+                conn.disconnect()
+
+                val rootJson = JSONObject(responseStr)
+                val resultObj = rootJson.optJSONObject("result") ?: rootJson
+                val status = resultObj.optString("status")
+
+                if (status.equals("success", ignoreCase = true) || resultObj.has("tickets")) {
+                    val ticketsArray = resultObj.optJSONArray("tickets")
+                    val list = mutableListOf<SupportTicket>()
+
                     if (ticketsArray != null) {
-                        val list = mutableListOf<SupportTicket>()
                         for (i in 0 until ticketsArray.length()) {
                             val item = ticketsArray.getJSONObject(i)
-                            val tId = item.optString("ticket_id", item.optString("id", "100"))
+                            val tId = item.optString("id", item.optString("ticket_id", (i + 1).toString()))
                             val title = item.optString("title", "Destek Talebi")
-                            val chName = item.optString("channel_name", item.optString("channelName", ""))
+                            val chName = item.optString("channel_name", item.optString("channelName", "Genel"))
                             val msg = item.optString("message", item.optString("msg", ""))
-                            val rawStatus = item.optString("status", item.optString("state", item.optString("stage", "Açık")))
+                            val rawStatus = item.optString("status", item.optString("state", "Açık"))
                             val statusCode = item.optString("status_code", item.optString("statusCode", "open"))
-                            val adminReply = item.optString("admin_reply", item.optString("adminReply", item.optString("reply", item.optString("answer", item.optString("response", item.optString("note", ""))))))
-                            val timestamp = item.optString("timestamp", getCurrentTime())
+                            val rawAdminReply = item.optString("admin_reply", item.optString("adminReply", item.optString("reply", "")))
+                            val adminReply = if (rawAdminReply.isNotBlank() && rawAdminReply != "null") rawAdminReply.trim() else null
+                            val timestamp = item.optString("timestamp", item.optString("create_date", getCurrentTime()))
 
-                            val hasReply = !adminReply.isNullOrBlank()
-                            val displayStatus = if (hasReply || rawStatus.equals("solved", true) || rawStatus.equals("Yanıtlandı", true) || rawStatus.equals("closed", true) || rawStatus.equals("done", true) || rawStatus.equals("answered", true)) "Yanıtlandı" else "Açık"
+                            val displayStatus = when {
+                                !adminReply.isNullOrBlank() || statusCode.equals("answered", ignoreCase = true) || rawStatus.equals("answered", ignoreCase = true) || rawStatus.equals("Yanıtlandı", ignoreCase = true) -> "Yanıtlandı"
+                                statusCode.equals("closed", ignoreCase = true) || rawStatus.equals("closed", ignoreCase = true) -> "Kapandı"
+                                else -> "Açık"
+                            }
 
                             list.add(
                                 SupportTicket(
@@ -158,37 +209,65 @@ object SupportRepository {
                                     message = msg,
                                     status = displayStatus,
                                     statusCode = statusCode,
-                                    adminReply = if (adminReply.isBlank()) null else adminReply,
+                                    adminReply = adminReply,
                                     timestamp = timestamp
                                 )
                             )
                         }
-                        _tickets.value = list
-
-                        val replied = list.find { !it.adminReply.isNullOrBlank() }
-                        if (replied != null && (unreadNotification.value?.id != replied.id || unreadNotification.value?.adminReply != replied.adminReply)) {
-                            unreadNotification.value = replied
-                        }
-                    } else if (resultObj != null) {
-                        _tickets.value = emptyList()
                     }
+
+                    // Update state - clean if empty response
+                    _tickets.value = list
+
+                    // Check for answered tickets that haven't been notified yet
+                    val newlyAnswered = list.firstOrNull { ticket ->
+                        ticket.adminReply != null && !notifiedReplyKeys.contains("${ticket.id}_${ticket.adminReply.hashCode()}")
+                    }
+
+                    if (newlyAnswered != null) {
+                        _unreadNotification.value = newlyAnswered
+                    }
+
+                    Result.success(list)
                 } else {
-                    Log.w(TAG, "Sync status not success")
+                    val msg = resultObj.optString("message", "Destek talepleri alınamadı.")
+                    _lastError.value = msg
+                    Result.failure(Exception(msg))
                 }
             } else {
                 conn.disconnect()
-                Log.w(TAG, "Sync HTTP error")
+                val msg = when (responseCode) {
+                    401 -> "Yetkilendirme hatası (401)."
+                    403 -> "Erişim engellendi (403)."
+                    404 -> "Destek servisi bulunamadı (404)."
+                    500 -> "Sunucu hatası (500)."
+                    else -> "HTTP $responseCode hatası."
+                }
+                _lastError.value = msg
+                // Keep last successful list on network error
+                Result.failure(Exception(msg))
             }
         } catch (e: Exception) {
-            Log.i(TAG, "Sync tickets from Odoo attempt failed, keeping last successful list.")
+            Log.e(TAG, "Support sync failed: ${e.message}")
+            _lastError.value = "Sunucuya bağlanılamadı."
+            // Keep last successful list on network error
+            Result.failure(e)
+        } finally {
+            _isSyncing.value = false
         }
     }
 
-    fun dismissNotification() {
-        unreadNotification.value = null
+    fun dismissNotification(ticket: SupportTicket? = null) {
+        val target = ticket ?: _unreadNotification.value
+        if (target?.adminReply != null) {
+            notifiedReplyKeys.add("${target.id}_${target.adminReply.hashCode()}")
+        }
+        _unreadNotification.value = null
     }
 
     fun clearAllTickets() {
         _tickets.value = emptyList()
+        _unreadNotification.value = null
     }
 }
+

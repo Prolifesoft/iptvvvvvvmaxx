@@ -188,6 +188,7 @@ class MainActivity : ComponentActivity() {
                         }
                         
                         PlaylistLoadingDialog()
+                        com.example.ui.components.UpdateDialog()
                     }
                 }
             }
