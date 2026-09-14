@@ -1,14 +1,18 @@
 yaml
 name: Build and Release Android APK
-on:
+'on':
   push:
     branches:
       - main
   workflow_dispatch:
 
 
+
+
 permissions:
   contents: write
+
+
 
 
 jobs:
@@ -16,11 +20,15 @@ jobs:
     runs-on: ubuntu-latest
 
 
+
+
     steps:
       - name: Kodu indir
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
+
+
 
 
       - name: Java 17 kur
@@ -31,10 +39,8 @@ jobs:
           cache: gradle
 
 
+
+
       - name: APK imza anahtarını hazırla
         env:
           KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
-        run: |
-          set -euo pipefail
-          test -n "$KEYSTORE_BASE64"
-          echo "$KEYSTORE_BASE64" | base64 --decode > "$RUNNER_TEMP/release.jks"
