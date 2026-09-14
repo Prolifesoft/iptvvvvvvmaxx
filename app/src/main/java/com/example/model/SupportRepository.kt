@@ -19,26 +19,15 @@ data class SupportTicket(
     val title: String,
     val channelName: String?,
     val message: String,
-    val status: String, // "Açık" or "Yanıtlandı"
+    val status: String,
+    val statusCode: String?,
     val adminReply: String?,
     val timestamp: String
 )
 
 object SupportRepository {
     private const val TAG = "SupportRepository"
-    private val _tickets = MutableStateFlow<List<SupportTicket>>(
-        listOf(
-            SupportTicket(
-                id = "100",
-                title = "Sistem Hoşgeldiniz Talebi",
-                channelName = "Genel Sistem",
-                message = "MAXX PLAYER destek birimine hoş geldiniz. Yayınlarda yaşadığınız sorunları buradan bildirebilirsiniz.",
-                status = "Yanıtlandı",
-                adminReply = "Teknik destek ekibimiz 7/24 hizmetinizdedir. Bildirdiğiniz kanallar anında incelenir.",
-                timestamp = getCurrentTime()
-            )
-        )
-    )
+    private val _tickets = MutableStateFlow<List<SupportTicket>>(emptyList())
     val tickets: MutableStateFlow<List<SupportTicket>> = _tickets
 
     val unreadNotification = MutableStateFlow<SupportTicket?>(null)
@@ -56,12 +45,11 @@ object SupportRepository {
             channelName = channelName,
             message = message,
             status = "Açık",
+            statusCode = "open",
             adminReply = null,
             timestamp = getCurrentTime()
         )
-        _tickets.value = listOf(newTicket) + _tickets.value
 
-        // Send to Odoo backend asynchronously so web administrators can see, edit, and reply to it
         CoroutineScope(Dispatchers.IO).launch {
             sendTicketToOdoo(newTicket)
         }
@@ -69,8 +57,7 @@ object SupportRepository {
 
     private suspend fun sendTicketToOdoo(ticket: SupportTicket) = withContext(Dispatchers.IO) {
         try {
-            val odooUrl = DeviceManager.getOdooServerUrl().trimEnd('/')
-            val endpoint = "$odooUrl/api/v1/support/create"
+            val endpoint = "https://maxxbilisim.com/api/v1/support/create"
             val url = URL(endpoint)
             val conn = (url.openConnection() as HttpURLConnection).apply {
                 requestMethod = "POST"
@@ -96,19 +83,28 @@ object SupportRepository {
             OutputStreamWriter(conn.outputStream).use { it.write(payload.toString()) }
             val code = conn.responseCode
             if (code in 200..299) {
-                val resp = conn.inputStream.bufferedReader().use { it.readText() }
-                Log.d(TAG, "Support ticket sent to Odoo successfully: $resp")
+                val responseStr = conn.inputStream.bufferedReader().use { it.readText() }
+                conn.disconnect()
+                val rootJson = JSONObject(responseStr)
+                val resultObj = rootJson.optJSONObject("result")
+                val status = resultObj?.optString("status") ?: rootJson.optString("status")
+                if (status == "success") {
+                    syncTicketsFromOdoo()
+                } else {
+                    Log.w(TAG, "Support ticket creation not successful")
+                }
+            } else {
+                conn.disconnect()
+                Log.w(TAG, "Support ticket HTTP error")
             }
-            conn.disconnect()
         } catch (e: Exception) {
-            Log.e(TAG, "Error sending support ticket to Odoo: ${e.message}")
+            Log.e(TAG, "Error sending support ticket to Odoo")
         }
     }
 
     suspend fun syncTicketsFromOdoo() = withContext(Dispatchers.IO) {
         try {
-            val odooUrl = DeviceManager.getOdooServerUrl().trimEnd('/')
-            val endpoint = "$odooUrl/api/v1/support/get"
+            val endpoint = "https://maxxbilisim.com/api/v1/support/get"
             val url = URL(endpoint)
             val conn = (url.openConnection() as HttpURLConnection).apply {
                 requestMethod = "POST"
@@ -127,49 +123,64 @@ object SupportRepository {
                 put("params", params)
             }
             OutputStreamWriter(conn.outputStream).use { it.write(payload.toString()) }
-            if (conn.responseCode in 200..299) {
+            val code = conn.responseCode
+            if (code in 200..299) {
                 val responseStr = conn.inputStream.bufferedReader().use { it.readText() }
                 conn.disconnect()
                 val rootJson = JSONObject(responseStr)
-                val json = rootJson.optJSONObject("result") ?: rootJson
-                val ticketsArray = json.optJSONArray("tickets")
-                if (ticketsArray != null) {
-                    val list = mutableListOf<SupportTicket>()
-                    for (i in 0 until ticketsArray.length()) {
-                        val item = ticketsArray.getJSONObject(i)
-                        val tId = item.optString("ticket_id", item.optString("id", "100"))
-                        val title = item.optString("title", "Destek Talebi")
-                        val chName = item.optString("channel_name", "")
-                        val msg = item.optString("message", "")
-                        val status = item.optString("status", "Açık")
-                        val adminReply = item.optString("admin_reply", item.optString("adminReply", ""))
-                        val timestamp = item.optString("timestamp", getCurrentTime())
+                val resultObj = rootJson.optJSONObject("result")
+                val status = resultObj?.optString("status") ?: rootJson.optString("status")
 
-                        list.add(
-                            SupportTicket(
-                                id = tId,
-                                title = title,
-                                channelName = if (chName.isBlank()) null else chName,
-                                message = msg,
-                                status = status,
-                                adminReply = if (adminReply.isBlank()) null else adminReply,
-                                timestamp = timestamp
+                if (status == "success" || resultObj != null) {
+                    val json = resultObj ?: rootJson
+                    val ticketsArray = json.optJSONArray("tickets")
+                    if (ticketsArray != null) {
+                        val list = mutableListOf<SupportTicket>()
+                        for (i in 0 until ticketsArray.length()) {
+                            val item = ticketsArray.getJSONObject(i)
+                            val tId = item.optString("ticket_id", item.optString("id", "100"))
+                            val title = item.optString("title", "Destek Talebi")
+                            val chName = item.optString("channel_name", item.optString("channelName", ""))
+                            val msg = item.optString("message", item.optString("msg", ""))
+                            val rawStatus = item.optString("status", item.optString("state", item.optString("stage", "Açık")))
+                            val statusCode = item.optString("status_code", item.optString("statusCode", "open"))
+                            val adminReply = item.optString("admin_reply", item.optString("adminReply", item.optString("reply", item.optString("answer", item.optString("response", item.optString("note", ""))))))
+                            val timestamp = item.optString("timestamp", getCurrentTime())
+
+                            val hasReply = !adminReply.isNullOrBlank()
+                            val displayStatus = if (hasReply || rawStatus.equals("solved", true) || rawStatus.equals("Yanıtlandı", true) || rawStatus.equals("closed", true) || rawStatus.equals("done", true) || rawStatus.equals("answered", true)) "Yanıtlandı" else "Açık"
+
+                            list.add(
+                                SupportTicket(
+                                    id = tId,
+                                    title = title,
+                                    channelName = if (chName.isBlank()) null else chName,
+                                    message = msg,
+                                    status = displayStatus,
+                                    statusCode = statusCode,
+                                    adminReply = if (adminReply.isBlank()) null else adminReply,
+                                    timestamp = timestamp
+                                )
                             )
-                        )
-                    }
-                    if (list.isNotEmpty()) {
+                        }
                         _tickets.value = list
-                        val replied = list.find { it.status == "Yanıtlandı" && !it.adminReply.isNullOrBlank() }
-                        if (replied != null && unreadNotification.value?.id != replied.id) {
+
+                        val replied = list.find { !it.adminReply.isNullOrBlank() }
+                        if (replied != null && (unreadNotification.value?.id != replied.id || unreadNotification.value?.adminReply != replied.adminReply)) {
                             unreadNotification.value = replied
                         }
+                    } else if (resultObj != null) {
+                        _tickets.value = emptyList()
                     }
+                } else {
+                    Log.w(TAG, "Sync status not success")
                 }
             } else {
                 conn.disconnect()
+                Log.w(TAG, "Sync HTTP error")
             }
         } catch (e: Exception) {
-            Log.i(TAG, "Sync tickets from Odoo attempt: ${e.message}")
+            Log.i(TAG, "Sync tickets from Odoo attempt failed, keeping last successful list.")
         }
     }
 
@@ -181,4 +192,3 @@ object SupportRepository {
         _tickets.value = emptyList()
     }
 }
-

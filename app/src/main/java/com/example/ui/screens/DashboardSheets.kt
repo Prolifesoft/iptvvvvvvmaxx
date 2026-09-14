@@ -153,11 +153,81 @@ fun SettingsSheetContent(onClose: () -> Unit, onOpenSupport: () -> Unit = {}) {
         HorizontalDivider(color = Color.DarkGray, modifier = Modifier.padding(vertical = 8.dp))
 
         var showParentalDialog by remember { mutableStateOf(false) }
+        var showCategoryDialog by remember { mutableStateOf(false) }
+        val orientationMode by com.example.model.SettingsManager.orientationMode.collectAsState()
+
+        Text("EKRAN VE GÖRÜNÜM", fontSize = 12.sp, color = Color.Gray, modifier = Modifier.padding(vertical = 8.dp))
+        SettingsItem(icon = Icons.Default.Category, title = "Kategori Yönetimi (Gizle / Göster)", iconTint = Color(0xFF00ACC1), onClick = { showCategoryDialog = true })
+        if (showCategoryDialog) {
+            com.example.ui.components.CategoryManagementDialog(onDismiss = { showCategoryDialog = false })
+        }
+
+        // Screen orientation selector
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(vertical = 4.dp)
+                .background(Color(0xFF161B22), RoundedCornerShape(12.dp))
+                .padding(12.dp)
+        ) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Icon(Icons.Default.ScreenRotation, contentDescription = null, tint = Color(0xFFFFB300), modifier = Modifier.size(20.dp))
+                Spacer(modifier = Modifier.width(16.dp))
+                Text("Ekran Yönü (Yatay / Dikey)", color = Color.White, fontSize = 14.sp)
+            }
+            Spacer(modifier = Modifier.height(8.dp))
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                val options = listOf(0 to "Otomatik", 1 to "Dikey", 2 to "Yatay")
+                options.forEach { (mode, label) ->
+                    val isSelected = orientationMode == mode
+                    Surface(
+                        shape = RoundedCornerShape(8.dp),
+                        color = if (isSelected) RedPrimary.copy(alpha = 0.2f) else Color(0xFF1E232A),
+                        border = androidx.compose.foundation.BorderStroke(
+                            1.dp,
+                            if (isSelected) RedPrimary else Color(0xFF333A44)
+                        ),
+                        modifier = Modifier
+                            .weight(1f)
+                            .clickable { com.example.model.SettingsManager.setOrientationMode(mode) }
+                    ) {
+                        Box(
+                            modifier = Modifier.padding(vertical = 8.dp),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Text(
+                                text = label,
+                                color = if (isSelected) Color.White else Color.Gray,
+                                fontSize = 12.sp,
+                                fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal
+                            )
+                        }
+                    }
+                }
+            }
+        }
+
         Text(stringResource(R.string.settings_parental), fontSize = 12.sp, color = Color.Gray, modifier = Modifier.padding(vertical = 8.dp))
         SettingsItem(icon = Icons.Default.Lock, title = stringResource(R.string.parental_control_title), iconTint = Color(0xFFE53935), onClick = { showParentalDialog = true })
         if (showParentalDialog) {
             com.example.ui.components.ParentalControlDialog(onDismiss = { showParentalDialog = false })
         }
+
+        Text("SÜRÜM VE GÜNCELLEME", fontSize = 12.sp, color = Color.Gray, modifier = Modifier.padding(vertical = 8.dp))
+        SettingsItem(
+            icon = Icons.Default.SystemUpdate,
+            title = "Güncellemeleri Kontrol Et",
+            iconTint = Color(0xFF42A5F5),
+            onClick = {
+                coroutineScope.launch {
+                    com.example.model.UpdateManager.checkForUpdates(context, manual = true)
+                    onClose()
+                }
+            }
+        )
 
         Text(stringResource(R.string.settings_data), fontSize = 12.sp, color = Color.Gray, modifier = Modifier.padding(vertical = 8.dp))
         SettingsItem(icon = Icons.Default.Delete, title = stringResource(R.string.settings_erase_recent), iconTint = Color(0xFF42A5F5), onClick = {
@@ -347,13 +417,20 @@ fun SettingsItem(icon: ImageVector, title: String, iconTint: Color, onClick: () 
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun ProfileSettingsSheet(onNavigateToAuth: () -> Unit = {}) {
+fun ProfileSettingsSheet(
+    onClose: () -> Unit = {},
+    onOpenSupport: () -> Unit = {},
+    onNavigateToAuth: () -> Unit = {}
+) {
     val context = LocalContext.current
     val currentLang by com.example.model.AppLanguageManager.currentLanguage.collectAsState()
     val db = remember { com.example.model.db.AppDatabase.getDatabase(context) }
     val coroutineScope = rememberCoroutineScope()
     var currentUser by remember { mutableStateOf<com.example.model.db.UserEntity?>(null) }
     var showSupportInline by remember { mutableStateOf(false) }
+
+    var showFaqDialog by remember { mutableStateOf(false) }
+    var showRateDialog by remember { mutableStateOf(false) }
 
     LaunchedEffect(Unit) {
         currentUser = db.iptvDao().getFirstUser()
@@ -379,16 +456,25 @@ fun ProfileSettingsSheet(onNavigateToAuth: () -> Unit = {}) {
                     .verticalScroll(rememberScrollState()),
                 horizontalArrangement = Arrangement.spacedBy(20.dp)
             ) {
-                // Left Column: Profile Card & Language
+                // Left Column: Profile Card, Language, Screen Orientation & Category
                 Column(
                     modifier = Modifier.weight(1f)
                 ) {
-                    Text(
-                        stringResource(R.string.personalization_title),
-                        fontSize = 18.sp,
-                        fontWeight = FontWeight.Bold,
-                        color = Color.White
-                    )
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            stringResource(R.string.personalization_title),
+                            fontSize = 18.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = Color.White
+                        )
+                        IconButton(onClick = onClose) {
+                            Icon(Icons.Default.Close, contentDescription = stringResource(R.string.close_desc), tint = Color.Gray)
+                        }
+                    }
                     Spacer(modifier = Modifier.height(10.dp))
 
                     // Connected Google Account Card
@@ -478,34 +564,160 @@ fun ProfileSettingsSheet(onNavigateToAuth: () -> Unit = {}) {
                             }
                         }
                     }
+
+                    Spacer(modifier = Modifier.height(14.dp))
+                    Text(
+                        "Ekran Yönü ve Kategori Yönetimi",
+                        fontSize = 12.sp,
+                        color = Color.Gray,
+                        fontWeight = FontWeight.SemiBold
+                    )
+                    Spacer(modifier = Modifier.height(6.dp))
+
+                    var showCategoryDialogProfile by remember { mutableStateOf(false) }
+                    val orientationModeProfile by com.example.model.SettingsManager.orientationMode.collectAsState()
+
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        Surface(
+                            shape = RoundedCornerShape(8.dp),
+                            color = Color(0xFF1E232A),
+                            border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xFF333A44)),
+                            modifier = Modifier
+                                .weight(1f)
+                                .clickable { showCategoryDialogProfile = true }
+                        ) {
+                            Row(
+                                modifier = Modifier.padding(vertical = 10.dp, horizontal = 10.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Icon(Icons.Default.Category, contentDescription = null, tint = Color(0xFF00ACC1), modifier = Modifier.size(18.dp))
+                                Spacer(modifier = Modifier.width(8.dp))
+                                Text("Kategoriler", color = Color.White, fontSize = 12.sp, fontWeight = FontWeight.Medium)
+                            }
+                        }
+                    }
+
+                    if (showCategoryDialogProfile) {
+                        com.example.ui.components.CategoryManagementDialog(onDismiss = { showCategoryDialogProfile = false })
+                    }
+
+                    Spacer(modifier = Modifier.height(8.dp))
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(6.dp)
+                    ) {
+                        val options = listOf(0 to "Oto", 1 to "Dikey", 2 to "Yatay")
+                        options.forEach { (mode, label) ->
+                            val isSelected = orientationModeProfile == mode
+                            Surface(
+                                shape = RoundedCornerShape(6.dp),
+                                color = if (isSelected) RedPrimary.copy(alpha = 0.2f) else Color(0xFF1E232A),
+                                border = androidx.compose.foundation.BorderStroke(1.dp, if (isSelected) RedPrimary else Color(0xFF333A44)),
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .clickable { com.example.model.SettingsManager.setOrientationMode(mode) }
+                            ) {
+                                Box(modifier = Modifier.padding(vertical = 6.dp), contentAlignment = Alignment.Center) {
+                                    Text(label, color = if (isSelected) Color.White else Color.Gray, fontSize = 11.sp, fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal)
+                                }
+                            }
+                        }
+                    }
                 }
 
-                // Right Column: Account Management Actions
+                // Right Column: Version Update, Share, FAQ, Support & Account Management Actions
                 Column(
                     modifier = Modifier.weight(1f)
                 ) {
                     Text(
-                        stringResource(R.string.account_management),
+                        "SÜRÜM VE MENÜLER",
                         fontSize = 12.sp,
                         color = Color.Gray,
                         fontWeight = FontWeight.SemiBold
                     )
                     Spacer(modifier = Modifier.height(10.dp))
 
-                    // Support Tickets
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .background(Color(0xFF1E232A), RoundedCornerShape(8.dp))
-                            .clickable { showSupportInline = true }
-                            .padding(12.dp)
-                    ) {
-                        Icon(Icons.Default.SupportAgent, contentDescription = null, tint = Color(0xFF81C784), modifier = Modifier.size(22.dp))
-                        Spacer(modifier = Modifier.width(12.dp))
-                        Text(stringResource(R.string.support_tickets_title), color = Color.White, fontSize = 14.sp)
-                    }
+                    // Version Update
+                    SettingsItem(
+                        icon = Icons.Default.SystemUpdate,
+                        title = "Güncellemeleri Kontrol Et",
+                        iconTint = Color(0xFF42A5F5),
+                        onClick = {
+                            coroutineScope.launch {
+                                com.example.model.UpdateManager.checkForUpdates(context, manual = true)
+                                onClose()
+                            }
+                        }
+                    )
 
+                    // Review & Rate & Share
+                    SettingsItem(
+                        icon = Icons.Default.RateReview,
+                        title = stringResource(R.string.settings_review),
+                        iconTint = Color(0xFFFFA726),
+                        onClick = { showRateDialog = true }
+                    )
+                    SettingsItem(
+                        icon = Icons.Default.Star,
+                        title = stringResource(R.string.settings_rate_us),
+                        iconTint = Color(0xFFEF5350),
+                        onClick = { showRateDialog = true }
+                    )
+                    SettingsItem(
+                        icon = Icons.Default.Share,
+                        title = stringResource(R.string.settings_share_family),
+                        iconTint = Color(0xFFBDBDBD),
+                        onClick = {
+                            try {
+                                val shareIntent = Intent(Intent.ACTION_SEND).apply {
+                                    type = "text/plain"
+                                    putExtra(Intent.EXTRA_TEXT, context.getString(R.string.share_text))
+                                }
+                                context.startActivity(Intent.createChooser(shareIntent, context.getString(R.string.settings_share_family)))
+                            } catch (e: Exception) {
+                                e.printStackTrace()
+                            }
+                        }
+                    )
+
+                    // FAQ
+                    SettingsItem(
+                        icon = Icons.Default.Help,
+                        title = stringResource(R.string.settings_faq),
+                        iconTint = Color(0xFFAB47BC),
+                        onClick = { showFaqDialog = true }
+                    )
+
+                    // Support / Report / Request
+                    SettingsItem(
+                        icon = Icons.Default.Report,
+                        title = stringResource(R.string.settings_report),
+                        iconTint = Color(0xFFFF7043),
+                        onClick = { onClose(); onOpenSupport() }
+                    )
+                    SettingsItem(
+                        icon = Icons.Default.Add,
+                        title = stringResource(R.string.settings_request),
+                        iconTint = Color(0xFFEF5350),
+                        onClick = { onClose(); onOpenSupport() }
+                    )
+                    SettingsItem(
+                        icon = Icons.Default.Build,
+                        title = stringResource(R.string.settings_support),
+                        iconTint = Color(0xFF42A5F5),
+                        onClick = { onClose(); onOpenSupport() }
+                    )
+
+                    Spacer(modifier = Modifier.height(12.dp))
+                    Text(
+                        stringResource(R.string.account_management),
+                        fontSize = 12.sp,
+                        color = Color.Gray,
+                        fontWeight = FontWeight.SemiBold
+                    )
                     Spacer(modifier = Modifier.height(8.dp))
 
                     // Switch Account
@@ -520,14 +732,14 @@ fun ProfileSettingsSheet(onNavigateToAuth: () -> Unit = {}) {
                                     onNavigateToAuth()
                                 }
                             }
-                            .padding(12.dp)
+                            .padding(10.dp)
                     ) {
-                        Icon(Icons.Default.SwitchAccount, contentDescription = null, tint = Color(0xFF42A5F5), modifier = Modifier.size(22.dp))
+                        Icon(Icons.Default.SwitchAccount, contentDescription = null, tint = Color(0xFF42A5F5), modifier = Modifier.size(20.dp))
                         Spacer(modifier = Modifier.width(12.dp))
-                        Text(stringResource(R.string.switch_account), color = Color.White, fontSize = 14.sp)
+                        Text(stringResource(R.string.switch_account), color = Color.White, fontSize = 13.sp)
                     }
 
-                    Spacer(modifier = Modifier.height(8.dp))
+                    Spacer(modifier = Modifier.height(6.dp))
 
                     // Sign Out
                     Row(
@@ -542,14 +754,14 @@ fun ProfileSettingsSheet(onNavigateToAuth: () -> Unit = {}) {
                                     onNavigateToAuth()
                                 }
                             }
-                            .padding(12.dp)
+                            .padding(10.dp)
                     ) {
-                        Icon(Icons.Default.Logout, contentDescription = null, tint = Color(0xFFFFA726), modifier = Modifier.size(22.dp))
+                        Icon(Icons.Default.Logout, contentDescription = null, tint = Color(0xFFFFA726), modifier = Modifier.size(20.dp))
                         Spacer(modifier = Modifier.width(12.dp))
-                        Text(stringResource(R.string.sign_out_account), color = Color.White, fontSize = 14.sp)
+                        Text(stringResource(R.string.sign_out_account), color = Color.White, fontSize = 13.sp)
                     }
 
-                    Spacer(modifier = Modifier.height(8.dp))
+                    Spacer(modifier = Modifier.height(6.dp))
 
                     // Remove Account
                     Row(
@@ -565,11 +777,11 @@ fun ProfileSettingsSheet(onNavigateToAuth: () -> Unit = {}) {
                                     onNavigateToAuth()
                                 }
                             }
-                            .padding(12.dp)
+                            .padding(10.dp)
                     ) {
-                        Icon(Icons.Default.PersonRemove, contentDescription = null, tint = Color(0xFFEF5350), modifier = Modifier.size(22.dp))
+                        Icon(Icons.Default.PersonRemove, contentDescription = null, tint = Color(0xFFEF5350), modifier = Modifier.size(20.dp))
                         Spacer(modifier = Modifier.width(12.dp))
-                        Text(stringResource(R.string.remove_account), color = Color(0xFFEF5350), fontWeight = FontWeight.Bold, fontSize = 14.sp)
+                        Text(stringResource(R.string.remove_account), color = Color(0xFFEF5350), fontWeight = FontWeight.Bold, fontSize = 13.sp)
                     }
                 }
             }
@@ -580,8 +792,17 @@ fun ProfileSettingsSheet(onNavigateToAuth: () -> Unit = {}) {
                     .fillMaxWidth()
                     .verticalScroll(rememberScrollState())
             ) {
-                Text(stringResource(R.string.personalization_title), fontSize = 20.sp, fontWeight = FontWeight.Bold, color = Color.White)
-                Spacer(modifier = Modifier.height(14.dp))
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(stringResource(R.string.personalization_title), fontSize = 20.sp, fontWeight = FontWeight.Bold, color = Color.White)
+                    IconButton(onClick = onClose) {
+                        Icon(Icons.Default.Close, contentDescription = stringResource(R.string.close_desc), tint = Color.Gray)
+                    }
+                }
+                Spacer(modifier = Modifier.height(10.dp))
 
                 Text(stringResource(R.string.language_selection), fontSize = 13.sp, color = Color.Gray, modifier = Modifier.padding(vertical = 4.dp))
 
@@ -603,6 +824,74 @@ fun ProfileSettingsSheet(onNavigateToAuth: () -> Unit = {}) {
 
                 HorizontalDivider(color = Color.DarkGray, modifier = Modifier.padding(vertical = 12.dp))
 
+                Text("SÜRÜM VE MENÜLER", fontSize = 13.sp, color = Color.Gray, modifier = Modifier.padding(vertical = 4.dp))
+
+                SettingsItem(
+                    icon = Icons.Default.SystemUpdate,
+                    title = "Güncellemeleri Kontrol Et",
+                    iconTint = Color(0xFF42A5F5),
+                    onClick = {
+                        coroutineScope.launch {
+                            com.example.model.UpdateManager.checkForUpdates(context, manual = true)
+                            onClose()
+                        }
+                    }
+                )
+                SettingsItem(
+                    icon = Icons.Default.RateReview,
+                    title = stringResource(R.string.settings_review),
+                    iconTint = Color(0xFFFFA726),
+                    onClick = { showRateDialog = true }
+                )
+                SettingsItem(
+                    icon = Icons.Default.Star,
+                    title = stringResource(R.string.settings_rate_us),
+                    iconTint = Color(0xFFEF5350),
+                    onClick = { showRateDialog = true }
+                )
+                SettingsItem(
+                    icon = Icons.Default.Share,
+                    title = stringResource(R.string.settings_share_family),
+                    iconTint = Color(0xFFBDBDBD),
+                    onClick = {
+                        try {
+                            val shareIntent = Intent(Intent.ACTION_SEND).apply {
+                                type = "text/plain"
+                               putExtra(Intent.EXTRA_TEXT, context.getString(R.string.share_text))
+                            }
+                            context.startActivity(Intent.createChooser(shareIntent, context.getString(R.string.settings_share_family)))
+                        } catch (e: Exception) {
+                            e.printStackTrace()
+                        }
+                    }
+                )
+                SettingsItem(
+                    icon = Icons.Default.Help,
+                    title = stringResource(R.string.settings_faq),
+                    iconTint = Color(0xFFAB47BC),
+                    onClick = { showFaqDialog = true }
+                )
+                SettingsItem(
+                    icon = Icons.Default.Report,
+                    title = stringResource(R.string.settings_report),
+                    iconTint = Color(0xFFFF7043),
+                    onClick = { onClose(); onOpenSupport() }
+                )
+                SettingsItem(
+                    icon = Icons.Default.Add,
+                    title = stringResource(R.string.settings_request),
+                    iconTint = Color(0xFFEF5350),
+                    onClick = { onClose(); onOpenSupport() }
+                )
+                SettingsItem(
+                    icon = Icons.Default.Build,
+                    title = stringResource(R.string.settings_support),
+                    iconTint = Color(0xFF42A5F5),
+                    onClick = { onClose(); onOpenSupport() }
+                )
+
+                HorizontalDivider(color = Color.DarkGray, modifier = Modifier.padding(vertical = 12.dp))
+
                 Text(stringResource(R.string.account_management), fontSize = 13.sp, color = Color.Gray, modifier = Modifier.padding(vertical = 4.dp))
 
                 Row(
@@ -620,18 +909,6 @@ fun ProfileSettingsSheet(onNavigateToAuth: () -> Unit = {}) {
                     }
                 }
                 Spacer(modifier = Modifier.height(12.dp))
-
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .clickable { showSupportInline = true }
-                        .padding(vertical = 10.dp)
-                ) {
-                    Icon(Icons.Default.SupportAgent, contentDescription = null, tint = Color(0xFF81C784))
-                    Spacer(modifier = Modifier.width(12.dp))
-                    Text(stringResource(R.string.support_tickets_title), color = Color.White, fontSize = 15.sp)
-                }
 
                 Row(
                     verticalAlignment = Alignment.CenterVertically,
@@ -691,6 +968,76 @@ fun ProfileSettingsSheet(onNavigateToAuth: () -> Unit = {}) {
             }
         }
     }
+
+    // Dialogs inside Profile Settings
+    if (showFaqDialog) {
+        AlertDialog(
+            onDismissRequest = { showFaqDialog = false },
+            title = { Text(stringResource(R.string.faq_title), fontWeight = FontWeight.Bold, color = Color.White) },
+            text = {
+                Column(modifier = Modifier.verticalScroll(rememberScrollState())) {
+                    Text(stringResource(R.string.faq_q1), fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.primary)
+                    Spacer(modifier = Modifier.height(4.dp))
+                    Text(stringResource(R.string.faq_a1), color = Color.LightGray, fontSize = 13.sp)
+                    Spacer(modifier = Modifier.height(12.dp))
+                    Text(stringResource(R.string.faq_q2), fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.primary)
+                    Spacer(modifier = Modifier.height(4.dp))
+                    Text(stringResource(R.string.faq_a2), color = Color.LightGray, fontSize = 13.sp)
+                    Spacer(modifier = Modifier.height(12.dp))
+                    Text(stringResource(R.string.faq_q3), fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.primary)
+                    Spacer(modifier = Modifier.height(4.dp))
+                    Text(stringResource(R.string.faq_a3), color = Color.LightGray, fontSize = 13.sp)
+                }
+            },
+            confirmButton = {
+                Button(onClick = { showFaqDialog = false }) {
+                    Text(stringResource(R.string.close_desc))
+                }
+            },
+            containerColor = MaterialTheme.colorScheme.surface
+        )
+    }
+
+    if (showRateDialog) {
+        var selectedStars by remember { mutableStateOf(5) }
+        AlertDialog(
+            onDismissRequest = { showRateDialog = false },
+            title = { Text(stringResource(R.string.rate_title), fontWeight = FontWeight.Bold, color = Color.White) },
+            text = {
+                Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.fillMaxWidth()) {
+                    Text(stringResource(R.string.rate_desc), color = Color.LightGray, fontSize = 13.sp, textAlign = TextAlign.Center)
+                    Spacer(modifier = Modifier.height(16.dp))
+                    Row(horizontalArrangement = Arrangement.Center) {
+                        (1..5).forEach { star ->
+                            Icon(
+                                imageVector = if (star <= selectedStars) Icons.Default.Star else Icons.Default.StarOutline,
+                                contentDescription = null,
+                                tint = Color(0xFFFFD700),
+                                modifier = Modifier
+                                    .size(36.dp)
+                                    .clickable { selectedStars = star }
+                                    .padding(4.dp)
+                            )
+                        }
+                    }
+                }
+            },
+            confirmButton = {
+                Button(onClick = {
+                    showRateDialog = false
+                    Toast.makeText(context, context.getString(R.string.rate_thanks), Toast.LENGTH_SHORT).show()
+                }) {
+                    Text(stringResource(R.string.rate_submit))
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showRateDialog = false }) {
+                    Text(stringResource(R.string.close_desc), color = Color.Gray)
+                }
+            },
+            containerColor = MaterialTheme.colorScheme.surface
+        )
+    }
 }
 
 @Composable
@@ -700,6 +1047,15 @@ fun SupportTicketsSheet(onClose: () -> Unit) {
     var newTitle by remember { mutableStateOf("") }
     var newMessage by remember { mutableStateOf("") }
     var showNewTicketForm by remember { mutableStateOf(false) }
+
+    val scope = rememberCoroutineScope()
+    LaunchedEffect(Unit) {
+        scope.launch {
+            try {
+                com.example.model.SupportRepository.syncTicketsFromOdoo()
+            } catch (e: Exception) {}
+        }
+    }
 
     Column(
         modifier = Modifier

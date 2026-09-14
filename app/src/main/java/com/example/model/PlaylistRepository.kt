@@ -135,15 +135,21 @@ object PlaylistRepository {
     }
     
     fun getGroups(type: com.example.parser.ItemType? = null): List<String> {
+        val hidden = CategoryManager.hiddenCategories.value
         val filtered = if (type == null) _playlist.value else _playlist.value.filter { it.type == type }
-        return filtered.mapNotNull { it.group }.distinct().sorted()
+        return filtered.mapNotNull { it.group }
+            .distinct()
+            .filter { !hidden.contains(it) }
+            .sorted()
     }
     
     fun getItemsForGroup(group: String?, type: com.example.parser.ItemType? = null): List<M3uItem> {
+        val hidden = CategoryManager.hiddenCategories.value
         var items = _playlist.value
         if (type != null) {
             items = items.filter { it.type == type }
         }
+        items = items.filter { !hidden.contains(it.group) }
         return if (group == null) {
             items
         } else {

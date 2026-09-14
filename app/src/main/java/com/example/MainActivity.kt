@@ -28,6 +28,7 @@ class MainActivity : ComponentActivity() {
         try {
             com.example.auth.GoogleAuthManager.currentActivity = java.lang.ref.WeakReference(this)
             com.example.model.SettingsManager.init(this)
+            com.example.model.SettingsManager.applyOrientationToActivity(this)
             com.example.model.AppLanguageManager.init(this)
             com.example.model.ParentalControlManager.init(this)
             com.example.model.FavoritesManager.init(this)
@@ -40,6 +41,11 @@ class MainActivity : ComponentActivity() {
         enableEdgeToEdge()
         setContent {
             val language by com.example.model.AppLanguageManager.currentLanguage.collectAsState()
+            val orientationMode by com.example.model.SettingsManager.orientationMode.collectAsState()
+            
+            LaunchedEffect(orientationMode) {
+                com.example.model.SettingsManager.applyOrientationToActivity(this@MainActivity)
+            }
             
             com.example.ui.ProvideAppLocale(language) {
                 MyApplicationTheme {

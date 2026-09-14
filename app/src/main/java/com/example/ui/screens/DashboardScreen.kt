@@ -33,13 +33,13 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.R
 import com.example.model.PlaylistRepository
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import com.example.model.SupportRepository
 import com.example.model.db.PlaybackProgressEntity
 import com.example.parser.ItemType
 import com.example.parser.M3uItem
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.launch
-import kotlinx.coroutines.withContext
 import java.net.HttpURLConnection
 import java.net.URL
 import java.text.SimpleDateFormat
@@ -62,6 +62,10 @@ fun DashboardScreen(
     val context = LocalContext.current
     val currentLang by com.example.model.AppLanguageManager.currentLanguage.collectAsState()
     val allItems by PlaylistRepository.playlist.collectAsState()
+    val hiddenCategories by com.example.model.CategoryManager.hiddenCategories.collectAsState()
+    val visibleItems = remember(allItems, hiddenCategories) {
+        allItems.filter { !hiddenCategories.contains(it.group) }
+    }
     val favoriteUrls by com.example.model.FavoritesManager.favoriteUrls.collectAsState()
     val db = remember { com.example.model.db.AppDatabase.getDatabase(context) }
     val recentMovies by db.iptvDao().getRecentProgressForType("MOVIE").collectAsState(initial = emptyList())
@@ -89,6 +93,18 @@ fun DashboardScreen(
     var searchQuery by remember { mutableStateOf("") }
     var showMenu by remember { mutableStateOf(false) }
     var showCategoryDrawer by remember { mutableStateOf(false) }
+
+    val scope = rememberCoroutineScope()
+    LaunchedEffect(Unit) {
+        scope.launch {
+            try {
+                com.example.model.SupportRepository.syncTicketsFromOdoo()
+            } catch (e: Exception) {}
+            try {
+                com.example.model.UpdateManager.checkForUpdates(context, manual = false)
+            } catch (e: Exception) {}
+        }
+    }
 
     // Navigation and Sheets state
     var selectedSeries by remember { mutableStateOf<List<M3uItem>?>(null) }
@@ -184,12 +200,12 @@ fun DashboardScreen(
         }
     }
 
-    val displayGroups = remember(allItems, currentType) {
+    val displayGroups = remember(visibleItems, currentType) {
         if (currentType != null) PlaylistRepository.getGroups(currentType) else emptyList()
     }
     var selectedGroup by remember(selectedTabIndex) { mutableStateOf<String?>(null) }
 
-    val currentTabItems = remember(allItems, selectedTabIndex, selectedGroup, searchQuery, favoriteUrls) {
+    val currentTabItems = remember(visibleItems, selectedTabIndex, selectedGroup, searchQuery, favoriteUrls) {
         when (selectedTabIndex) {
             1 -> {
                 PlaylistRepository.getItemsForGroup(selectedGroup, ItemType.MOVIE).filter {
@@ -207,21 +223,21 @@ fun DashboardScreen(
                 }
             }
             4 -> {
-                allItems.filter { favoriteUrls.contains(it.url) && it.title.contains(searchQuery, ignoreCase = true) }
+                visibleItems.filter { favoriteUrls.contains(it.url) && it.title.contains(searchQuery, ignoreCase = true) }
             }
             else -> emptyList()
         }
     }
 
-    val groupCounts = remember(allItems, currentType) {
+    val groupCounts = remember(visibleItems, currentType) {
         if (currentType != null) {
-            allItems.filter { it.type == currentType }
+            visibleItems.filter { it.type == currentType }
                 .groupingBy { it.group ?: "" }
                 .eachCount()
         } else emptyMap()
     }
-    val totalTypeCount = remember(allItems, currentType) {
-        if (currentType != null) allItems.count { it.type == currentType } else 0
+    val totalTypeCount = remember(visibleItems, currentType) {
+        if (currentType != null) visibleItems.count { it.type == currentType } else 0
     }
 
     val imdbReleases = remember(tmdb30DaysItems, tmdb60DaysItems, selectedImdbTimeFrame) {
@@ -461,10 +477,10 @@ fun DashboardScreen(
                 when (selectedTabIndex) {
                     0 -> {
                         // TAB 0: HOME / ANASAYFA
-                        val heroItem = remember(allItems) { allItems.firstOrNull { it.type == ItemType.MOVIE && !it.logo.isNullOrEmpty() } ?: allItems.firstOrNull() }
-                        val popularMovies = remember(allItems) { allItems.filter { it.type == ItemType.MOVIE }.take(15) }
-                        val liveChannels = remember(allItems) { allItems.filter { it.type == ItemType.LIVE }.take(15) }
-                        val seriesItems = remember(allItems) { allItems.filter { it.type == ItemType.SERIES } }
+                        val heroItem = remember(visibleItems) { visibleItems.firstOrNull { it.type == ItemType.MOVIE && !it.logo.isNullOrEmpty() } ?: visibleItems.firstOrNull() }
+                        val popularMovies = remember(visibleItems) { visibleItems.filter { it.type == ItemType.MOVIE }.take(15) }
+                        val liveChannels = remember(visibleItems) { visibleItems.filter { it.type == ItemType.LIVE }.take(15) }
+                        val seriesItems = remember(visibleItems) { visibleItems.filter { it.type == ItemType.SERIES } }
                         val seriesGroups = remember(seriesItems) { seriesItems.groupBy { it.seriesName ?: it.title } }
 
                         LazyColumn(
@@ -1215,10 +1231,14 @@ fun DashboardScreen(
             containerColor = MaterialTheme.colorScheme.surface
         ) {
             com.example.ui.ProvideAppLocale(currentLang) {
-                ProfileSettingsSheet(onNavigateToAuth = {
-                    showProfileSheet = false
-                    onNavigateToAuth()
-                })
+                ProfileSettingsSheet(
+                    onClose = { showProfileSheet = false },
+                    onOpenSupport = { showSupportSheet = true },
+                    onNavigateToAuth = {
+                        showProfileSheet = false
+                        onNavigateToAuth()
+                    }
+                )
             }
         }
     }
@@ -1271,5 +1291,8 @@ fun DashboardScreen(
             onDismiss = { showProUpgradeDialog = false }
         )
     }
+
+    // Version Update Dialog
+    com.example.ui.components.UpdateDialog()
 }
 }
