@@ -1,0 +1,5 @@
+mkdir -p .github/workflows
+# build-release.yml dosyasını buraya kaydedin
+git add .github/workflows/build-release.yml
+git commit -m "ci: add GitHub Actions release workflow"
+git push origin main
