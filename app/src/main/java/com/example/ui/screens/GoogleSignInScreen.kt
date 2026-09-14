@@ -47,42 +47,45 @@ fun GoogleSignInScreen(onSignInSuccess: (String) -> Unit) {
     
     val completeLoginWithEmail: (String, String) -> Unit = { email, displayName ->
         isLoading = true
-        statusText = "Odoo sunucusunda hesap ve 15 günlük deneme paketi oluşturuluyor..."
+        statusText = "Odoo 19 sunucusunda hesap kontrol ediliyor..."
         errorMessage = null
         scope.launch {
             try {
-                val success = OdooIntegrationManager.registerCustomerAndTrial(
-                    context = context,
-                    userId = email,
-                    userName = displayName,
-                    userEmail = email
-                )
-                if (success) {
-                    val db = AppDatabase.getDatabase(context)
-                    db.iptvDao().insertUser(
-                        UserEntity(
-                            id = email,
-                            name = displayName,
-                            email = email
-                        )
+                // 1. Doğrulanan Google kullanıcısını yerel veritabanına ve DeviceManager'a kaydet
+                val db = AppDatabase.getDatabase(context)
+                db.iptvDao().insertUser(
+                    UserEntity(
+                        id = email,
+                        name = displayName,
+                        email = email
                     )
-                    DeviceManager.setCustomerName(displayName)
-                    DeviceManager.setCurrentUser(email, displayName, email)
+                )
+                DeviceManager.setCustomerName(displayName)
+                DeviceManager.setCurrentUser(email, displayName, email)
 
-                    try {
-                        OdooIntegrationManager.syncPlaylistsFromOdoo(context, email)
-                    } catch (e: Exception) {}
-
-                    onSignInSuccess(email)
-                } else {
-                    isLoading = false
-                    statusText = null
-                    errorMessage = "Odoo sunucu kayıt hatası. Lütfen internet bağlantınızı kontrol edin."
+                // 2. Odoo 19 sunucusuyla müşteri/deneme senkronizasyonu
+                try {
+                    OdooIntegrationManager.registerCustomerAndTrial(
+                        context = context,
+                        userId = email,
+                        userName = displayName,
+                        userEmail = email
+                    )
+                } catch (e: Exception) {
+                    android.util.Log.w("GoogleSignIn", "Odoo kayit uyarisi: ${e.message}")
                 }
+
+                // 3. Varsa mevcut Odoo çalma listelerini senkronize et
+                try {
+                    OdooIntegrationManager.syncPlaylistsFromOdoo(context, email)
+                } catch (e: Exception) {}
+
+                // 4. Başarılı şekilde Cihaz Bilgileri (QR Kod) ekranına geçiş yap
+                onSignInSuccess(email)
             } catch (e: Exception) {
                 isLoading = false
                 statusText = null
-                errorMessage = "Bağlantı hatası: ${e.localizedMessage}"
+                errorMessage = "Giriş tamamlanırken hata: ${e.localizedMessage}"
             }
         }
     }
@@ -218,6 +221,8 @@ fun GoogleSignInScreen(onSignInSuccess: (String) -> Unit) {
                     )
                 }
             }
+
+
             
             Spacer(modifier = Modifier.height(24.dp))
             

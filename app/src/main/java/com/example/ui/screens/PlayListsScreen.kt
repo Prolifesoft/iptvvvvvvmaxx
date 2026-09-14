@@ -39,7 +39,6 @@ fun PlayListsScreen(
     val context = LocalContext.current
     val db = remember { AppDatabase.getDatabase(context) }
     val playlists by db.iptvDao().getPlaylistsForUser(userId).collectAsState(initial = emptyList())
-    val coroutineScope = rememberCoroutineScope()
 
     val daysRemaining by DeviceManager.trialDaysLeft.collectAsState()
     val isPro by DeviceManager.isProState.collectAsState()
@@ -264,14 +263,6 @@ fun PlayListsScreen(
                                     Text(playlist.name, color = Color.White, fontWeight = FontWeight.Bold, fontSize = 16.sp)
                                     Text(playlist.hostUrl, color = Color.Gray, fontSize = 12.sp, maxLines = 1, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis)
                                 }
-                            }
-                            
-                            IconButton(onClick = {
-                                coroutineScope.launch {
-                                    db.iptvDao().deletePlaylist(playlist)
-                                }
-                            }) {
-                                Icon(Icons.Default.Delete, contentDescription = "Sil", tint = Color.Gray)
                             }
                         }
                     }

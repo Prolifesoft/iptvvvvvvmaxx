@@ -25,25 +25,20 @@ import kotlinx.coroutines.launch
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        com.example.auth.GoogleAuthManager.currentActivity = java.lang.ref.WeakReference(this)
-        com.example.model.SettingsManager.init(this)
-        com.example.model.AppLanguageManager.init(this)
-        com.example.model.ParentalControlManager.init(this)
-        com.example.model.FavoritesManager.init(this)
-        com.example.model.CategoryManager.init(this)
-        com.example.model.DeviceManager.init(this)
+        try {
+            com.example.auth.GoogleAuthManager.currentActivity = java.lang.ref.WeakReference(this)
+            com.example.model.SettingsManager.init(this)
+            com.example.model.AppLanguageManager.init(this)
+            com.example.model.ParentalControlManager.init(this)
+            com.example.model.FavoritesManager.init(this)
+            com.example.model.CategoryManager.init(this)
+            com.example.model.DeviceManager.init(this)
+        } catch (e: Exception) {
+            android.util.Log.e("MainActivity", "Error during initialization", e)
+        }
         
         enableEdgeToEdge()
         setContent {
-            val isPortraitEnabled by com.example.model.SettingsManager.isPortraitEnabled.collectAsState()
-            LaunchedEffect(isPortraitEnabled) {
-                requestedOrientation = if (isPortraitEnabled) {
-                    android.content.pm.ActivityInfo.SCREEN_ORIENTATION_SENSOR
-                } else {
-                    android.content.pm.ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE
-                }
-            }
-
             val language by com.example.model.AppLanguageManager.currentLanguage.collectAsState()
             
             com.example.ui.ProvideAppLocale(language) {
@@ -54,8 +49,6 @@ class MainActivity : ComponentActivity() {
                 ) {
                     val navController = rememberNavController()
                     var currentUserId by remember { mutableStateOf("") }
-                    var isM3uMode by remember { mutableStateOf(false) }
-                    var editingPlaylistId by remember { mutableStateOf<Int?>(null) }
                     val scope = rememberCoroutineScope()
                     
                     androidx.compose.foundation.layout.Box(modifier = Modifier.fillMaxSize()) {
@@ -73,10 +66,21 @@ class MainActivity : ComponentActivity() {
                             composable(NavRoutes.GOOGLE_SIGN_IN) {
                                 GoogleSignInScreen(onSignInSuccess = { userId ->
                                     currentUserId = userId
-                                    navController.navigate(NavRoutes.DEVICE_INFO) {
+                                    navController.navigate("${NavRoutes.PACKAGE_SELECTION}/$userId") {
                                         popUpTo(NavRoutes.GOOGLE_SIGN_IN) { inclusive = true }
                                     }
                                 })
+                            }
+                            composable("${NavRoutes.PACKAGE_SELECTION}/{userId}") { backStackEntry ->
+                                val userId = backStackEntry.arguments?.getString("userId") ?: currentUserId
+                                PackageSelectionScreen(
+                                    userId = userId,
+                                    onPackageSelected = { packageId ->
+                                        navController.navigate(NavRoutes.DEVICE_INFO) {
+                                            popUpTo(NavRoutes.PACKAGE_SELECTION) { inclusive = true }
+                                        }
+                                    }
+                                )
                             }
                             composable(NavRoutes.DEVICE_INFO) {
                                 DeviceInfoScreen(
@@ -139,18 +143,6 @@ class MainActivity : ComponentActivity() {
                                             navController.navigate(NavRoutes.GOOGLE_SIGN_IN) {
                                                 popUpTo(0) { inclusive = true }
                                             }
-                                        }
-                                    }
-                                )
-                            }
-                            composable(NavRoutes.LOGIN) {
-                                SignInScreen(
-                                    userId = currentUserId,
-                                    isM3uMode = isM3uMode,
-                                    editingPlaylistId = editingPlaylistId,
-                                    onLoginSuccess = {
-                                        navController.navigate(NavRoutes.PLAYLISTS) {
-                                            popUpTo(NavRoutes.LOGIN) { inclusive = true }
                                         }
                                     }
                                 )

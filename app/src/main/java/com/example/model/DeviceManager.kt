@@ -224,6 +224,14 @@ object DeviceManager {
         _customerNameState.value = null
     }
 
+    fun updateTrialDays(days: Int) {
+        if (days >= 0) {
+            val calculatedStart = System.currentTimeMillis() - ((15 - days).coerceAtLeast(0) * 24L * 60 * 60 * 1000)
+            prefs.edit().putLong(KEY_TRIAL_START, calculatedStart).apply()
+            refreshLicenseState()
+        }
+    }
+
     fun refreshLicenseState() {
         val days = getDaysRemaining()
         val pro = isProPurchased()

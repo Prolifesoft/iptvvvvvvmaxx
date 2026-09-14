@@ -80,12 +80,22 @@ fun DeviceInfoScreen(
     LaunchedEffect(userId) {
         val db = AppDatabase.getDatabase(context)
         val user = withContext(Dispatchers.IO) {
-            if (userId.isNotBlank()) db.iptvDao().getUser(userId) else db.iptvDao().getFirstUser()
+            val fetched = if (userId.isNotBlank()) db.iptvDao().getUser(userId) else db.iptvDao().getFirstUser()
+            if (fetched != null && (fetched.id == "demo@maxxbilisim.com" || fetched.name == "Demo User" || fetched.email == "demo@maxxbilisim.com")) {
+                db.iptvDao().clearUsers()
+                null
+            } else {
+                fetched
+            }
+        }
+        if (user == null) {
+            onSignOut()
+            return@LaunchedEffect
         }
         currentUser = user
-        val targetUserId = user?.id ?: userId.ifBlank { "device_user" }
-        val userEmail = user?.email ?: ""
-        val userName = user?.name ?: DeviceManager.getCustomerName() ?: "Kullanıcı"
+        val targetUserId = user.id
+        val userEmail = user.email ?: ""
+        val userName = user.name ?: "Kullanıcı"
 
         // Proactively register device in Odoo so the web portal finds the device immediately
         withContext(Dispatchers.IO) {

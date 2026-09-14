@@ -112,12 +112,26 @@ object OdooIntegrationManager {
                         if (custName.isNotBlank()) {
                             DeviceManager.setCustomerName(custName)
                         }
-                    } else if (errorMsg.contains("cihaz limiti", ignoreCase = true) || errorMsg.contains("limit", ignoreCase = true)) {
-                        // Customer already has an active registered device in Odoo (MAX-8842-1928)
-                        Log.i(TAG, "Customer device limit reached in Odoo. Linking to registered customer device credentials.")
-                        DeviceManager.setDeviceCredentials("MAX-8842-1928", "654321")
-                        DeviceManager.setCustomerName(userName)
+                        if (resultJson.has("days_remaining")) {
+                            val remaining = resultJson.optInt("days_remaining", -1)
+                            if (remaining >= 0) {
+                                DeviceManager.updateTrialDays(remaining)
+                            }
+                        }
+                    } else if (errorMsg.contains("cihaz limiti", ignoreCase = true) ||
+                               errorMsg.contains("limit", ignoreCase = true) ||
+                               errorMsg.contains("zaten", ignoreCase = true) ||
+                               errorMsg.contains("already exists", ignoreCase = true) ||
+                               errorMsg.contains("ValidationError", ignoreCase = true)) {
+                        // Mevcut Odoo müşterisi tespit edildi (cihaz limiti veya hesap mevcut)
+                        Log.i(TAG, "Mevcut Odoo müşterisi doğrulandı: $userEmail ($errorMsg)")
                         isSuccess = true
+                        DeviceManager.setOdooCustomerSynced(true)
+                        DeviceManager.setCustomerName(userName)
+                        if (DeviceManager.getDaysRemaining() <= 0) {
+                            DeviceManager.updateTrialDays(15)
+                        }
+                        _lastSyncMessage.value = "Odoo 19 Müşteri Hesabı Doğrulandı"
                     } else if (status == "error" && errorMsg.contains("Bu cihaz baska bir hesaba kayitli", ignoreCase = true)) {
                         // Conflict: Generate clean new device credentials and retry registration
                         Log.w(TAG, "Device conflict detected. Generating fresh device ID and retrying registration...")
@@ -158,9 +172,17 @@ object OdooIntegrationManager {
                         if (retryResponseStr.isNotBlank()) {
                             val retryRoot = JSONObject(retryResponseStr)
                             val retryResult = retryRoot.optJSONObject("result") ?: retryRoot
-                            if (retryResult.optString("status") == "success" || retryResult.has("package_type")) {
+                            val retryError = retryRoot.optJSONObject("error")
+                            val retryErrorMsg = retryError?.optJSONObject("data")?.optString("message")
+                                ?: retryError?.optString("message")
+                                ?: retryResult.optString("message")
+
+                            if (retryResult.optString("status") == "success" || retryResult.has("package_type") ||
+                                retryErrorMsg.contains("cihaz limiti", ignoreCase = true) ||
+                                retryErrorMsg.contains("ValidationError", ignoreCase = true)) {
                                 isSuccess = true
                                 DeviceManager.setOdooCustomerSynced(true)
+                                DeviceManager.setCustomerName(userName)
                                 if (retryResult.optBoolean("is_pro", false)) {
                                     DeviceManager.upgradeToPro()
                                 }
@@ -207,27 +229,39 @@ object OdooIntegrationManager {
 
             // 1. Fetch remote playlists from Odoo / customer account
             val odooPlaylists = fetchRemotePlaylistsFromOdoo(userId)
+            val remoteUrls = odooPlaylists.map { it.hostUrl }.toSet()
+            val localPlaylists = db.iptvDao().getPlaylistsForUserSync(userId)
 
-            if (odooPlaylists.isNotEmpty()) {
-                // Add new playlists from Odoo without deleting user's existing local playlists
-                val currentLocalUrls = db.iptvDao().getPlaylistsForUserSync(userId).map { it.hostUrl }.toSet()
-                for (p in odooPlaylists) {
-                    if (!currentLocalUrls.contains(p.hostUrl)) {
-                        val entity = PlaylistEntity(
-                            userId = userId,
-                            name = p.name,
-                            hostUrl = p.hostUrl,
-                            username = p.username,
-                            password = p.password
-                        )
-                        db.iptvDao().insertPlaylist(entity)
-                    }
+            // Remove local playlists that were removed on Odoo backend
+            for (local in localPlaylists) {
+                if (!remoteUrls.contains(local.hostUrl)) {
+                    db.iptvDao().deletePlaylist(local)
                 }
-                resultCount = odooPlaylists.size
-                _lastSyncMessage.value = "$resultCount adet çalma listesi Odoo 19'dan başarıyla aktarıldı."
-            } else {
-                _lastSyncMessage.value = "Odoo 19 üzerinde bu cihaza ait yeni çalma listesi bulunamadı."
             }
+
+            // Insert or update remote playlists from Odoo
+            for (p in odooPlaylists) {
+                val existing = localPlaylists.find { it.hostUrl == p.hostUrl }
+                if (existing == null) {
+                    val entity = PlaylistEntity(
+                        userId = userId,
+                        name = p.name,
+                        hostUrl = p.hostUrl,
+                        username = p.username,
+                        password = p.password
+                    )
+                    db.iptvDao().insertPlaylist(entity)
+                } else if (existing.name != p.name || existing.username != p.username || existing.password != p.password) {
+                    val updated = existing.copy(
+                        name = p.name,
+                        username = p.username,
+                        password = p.password
+                    )
+                    db.iptvDao().insertPlaylist(updated)
+                }
+            }
+            resultCount = odooPlaylists.size
+            _lastSyncMessage.value = if (resultCount > 0) "$resultCount adet çalma listesi Odoo 19'dan başarıyla senkronize edildi." else "Odoo 19 üzerinde bu cihaza ait çalma listesi bulunamadı."
         } catch (e: Exception) {
             Log.e(TAG, "Error syncing playlists from Odoo", e)
             _lastSyncMessage.value = "Odoo senkronizasyon hatası: ${e.localizedMessage}"
@@ -256,6 +290,7 @@ object OdooIntegrationManager {
                 put("device_id", DeviceManager.getDeviceId())
                 put("device_key", DeviceManager.getDeviceKey())
                 put("user_id", userId)
+                put("email", userId)
             }
             val payload = JSONObject().apply {
                 put("jsonrpc", "2.0")
@@ -274,6 +309,12 @@ object OdooIntegrationManager {
                 // If Odoo returns is_pro or days_remaining, update device state
                 if (json.optBoolean("is_pro", false)) {
                     DeviceManager.upgradeToPro()
+                }
+                if (json.has("days_remaining")) {
+                    val remaining = json.optInt("days_remaining", -1)
+                    if (remaining >= 0) {
+                        DeviceManager.updateTrialDays(remaining)
+                    }
                 }
 
                 // Extract Customer Name from Odoo response if available
@@ -311,43 +352,5 @@ object OdooIntegrationManager {
 
         // Return empty list if no playlists assigned on Odoo server
         return emptyList()
-    }
-
-    /**
-     * Simulates remote playlist upload from web browser (URL or Xtream codes with user/pass/port).
-     */
-    suspend fun remoteUploadPlaylist(
-        context: Context,
-        userId: String,
-        name: String,
-        hostUrl: String,
-        username: String = "",
-        password: String = ""
-    ): Boolean = withContext(Dispatchers.IO) {
-        try {
-            val db = AppDatabase.getDatabase(context)
-            val targetUserId = if (userId.isNotBlank()) userId else (db.iptvDao().getFirstUser()?.id ?: "ncem0332006@gmail.com")
-            if (db.iptvDao().getUser(targetUserId) == null) {
-                db.iptvDao().insertUser(
-                    UserEntity(
-                        id = targetUserId,
-                        name = DeviceManager.getCustomerName() ?: "Kullanıcı",
-                        email = if (targetUserId.contains("@")) targetUserId else "ncem0332006@gmail.com"
-                    )
-                )
-            }
-            val entity = PlaylistEntity(
-                userId = targetUserId,
-                name = name.ifBlank { "Çalma Listesi" },
-                hostUrl = hostUrl.trim(),
-                username = username.trim(),
-                password = password.trim()
-            )
-            db.iptvDao().insertPlaylist(entity)
-            true
-        } catch (e: Exception) {
-            Log.e(TAG, "Error adding remote playlist", e)
-            false
-        }
     }
 }

@@ -1,54 +1,69 @@
 package com.example.ui.screens
 
-import android.net.Uri
-import androidx.annotation.OptIn
+import androidx.compose.animation.core.*
 import androidx.compose.foundation.background
-import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Tv
+import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.Icon
+import androidx.compose.material3.Text
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.scale
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.viewinterop.AndroidView
-import androidx.media3.common.MediaItem
-import androidx.media3.common.Player
-import androidx.media3.common.util.UnstableApi
-import androidx.media3.exoplayer.ExoPlayer
-import androidx.media3.ui.AspectRatioFrameLayout
-import androidx.media3.ui.PlayerView
-import kotlinx.coroutines.delay
-import kotlinx.coroutines.launch
-
-import androidx.compose.foundation.clickable
-import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material3.Text
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import androidx.compose.ui.text.font.FontWeight
+import com.example.ui.theme.RedPrimary
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
-@OptIn(UnstableApi::class)
 @Composable
 fun SplashScreen(
     onNavigateToNext: (targetRoute: String, existingUserId: String?) -> Unit
 ) {
     val context = LocalContext.current
     var hasNavigated by remember { mutableStateOf(false) }
+    val scope = rememberCoroutineScope()
+
+    // Smooth pulse animation for logo
+    val infiniteTransition = rememberInfiniteTransition(label = "pulse")
+    val pulseScale by infiniteTransition.animateFloat(
+        initialValue = 0.95f,
+        targetValue = 1.05f,
+        animationSpec = infiniteRepeatable(
+            animation = tween(1200, easing = FastOutSlowInEasing),
+            repeatMode = RepeatMode.Reverse
+        ),
+        label = "scale"
+    )
 
     fun navigateNext() {
         if (!hasNavigated) {
             hasNavigated = true
-            // Determine user state
-            kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.Dispatchers.Main).launch {
+            scope.launch {
                 try {
-                    val db = com.example.model.db.AppDatabase.getDatabase(context)
-                    val existingUser = db.iptvDao().getFirstUser()
+                    val existingUser = withContext(Dispatchers.IO) {
+                        val db = com.example.model.db.AppDatabase.getDatabase(context)
+                        val user = db.iptvDao().getFirstUser()
+                        if (user != null && (user.id == "demo@maxxbilisim.com" || user.name == "Demo User" || user.email == "demo@maxxbilisim.com")) {
+                            db.iptvDao().clearUsers()
+                            null
+                        } else {
+                            user
+                        }
+                    }
                     if (existingUser != null) {
-                        // User exists -> Always go to QR code / device info screen first step-by-step
                         onNavigateToNext(com.example.ui.NavRoutes.DEVICE_INFO, existingUser.id)
                     } else {
-                        // No user account yet -> go to Google Sign-In / Login
                         onNavigateToNext(com.example.ui.NavRoutes.GOOGLE_SIGN_IN, null)
                     }
                 } catch (e: Exception) {
@@ -58,78 +73,76 @@ fun SplashScreen(
         }
     }
 
-    // Fast safety timeout in case video hangs or fails to finish
     LaunchedEffect(Unit) {
-        delay(4000)
+        delay(900)
         navigateNext()
-    }
-
-    val exoPlayer = remember(context) {
-        ExoPlayer.Builder(context).build().apply {
-            val rawResId = context.resources.getIdentifier("intro2", "raw", context.packageName)
-            val videoUri = if (rawResId != 0) {
-                Uri.parse("android.resource://${context.packageName}/$rawResId")
-            } else {
-                Uri.parse("asset:///intro2.mp4")
-            }
-            setMediaItem(MediaItem.fromUri(videoUri))
-            prepare()
-            playWhenReady = true
-            addListener(object : Player.Listener {
-                override fun onPlaybackStateChanged(playbackState: Int) {
-                    if (playbackState == Player.STATE_ENDED) {
-                        navigateNext()
-                    }
-                }
-
-                override fun onPlayerError(error: androidx.media3.common.PlaybackException) {
-                    android.util.Log.e("SplashScreen", "Video error: ${error.message}", error)
-                    navigateNext()
-                }
-            })
-        }
-    }
-
-    DisposableEffect(exoPlayer) {
-        onDispose {
-            exoPlayer.stop()
-            exoPlayer.release()
-        }
     }
 
     Box(
         modifier = Modifier
             .fillMaxSize()
-            .background(Color.Black)
+            .background(
+                Brush.verticalGradient(
+                    colors = listOf(
+                        Color(0xFF0F172A),
+                        Color(0xFF020617)
+                    )
+                )
+            )
             .clickable { navigateNext() },
         contentAlignment = Alignment.Center
     ) {
-        AndroidView(
-            factory = { ctx ->
-                PlayerView(ctx).apply {
-                    player = exoPlayer
-                    useController = false
-                    resizeMode = AspectRatioFrameLayout.RESIZE_MODE_ZOOM
-                    setShutterBackgroundColor(android.graphics.Color.TRANSPARENT)
-                }
-            },
-            modifier = Modifier.fillMaxSize()
-        )
-
-        // Skip Button in top right
-        Box(
-            modifier = Modifier
-                .align(Alignment.TopEnd)
-                .padding(top = 28.dp, end = 20.dp)
-                .background(Color.Black.copy(alpha = 0.6f), RoundedCornerShape(20.dp))
-                .clickable { navigateNext() }
-                .padding(horizontal = 14.dp, vertical = 6.dp)
+        Column(
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.Center,
+            modifier = Modifier.padding(24.dp)
         ) {
+            Box(
+                modifier = Modifier
+                    .size(96.dp)
+                    .scale(pulseScale)
+                    .background(
+                        Brush.radialGradient(
+                            colors = listOf(RedPrimary, Color(0xFFB71C1C))
+                        ),
+                        shape = CircleShape
+                    ),
+                contentAlignment = Alignment.Center
+            ) {
+                Icon(
+                    imageVector = Icons.Default.Tv,
+                    contentDescription = null,
+                    tint = Color.White,
+                    modifier = Modifier.size(52.dp)
+                )
+            }
+
+            Spacer(modifier = Modifier.height(24.dp))
+
             Text(
-                text = "Geç >>",
+                text = "MAXX IPTV",
                 color = Color.White,
+                fontSize = 26.sp,
+                fontWeight = FontWeight.Bold,
+                letterSpacing = 2.sp
+            )
+
+            Spacer(modifier = Modifier.height(6.dp))
+
+            Text(
+                text = "Odoo 19 Powered Player",
+                color = Color(0xFF94A3B8),
                 fontSize = 13.sp,
-                fontWeight = FontWeight.Bold
+                fontWeight = FontWeight.Medium,
+                letterSpacing = 0.5.sp
+            )
+
+            Spacer(modifier = Modifier.height(32.dp))
+
+            CircularProgressIndicator(
+                color = RedPrimary,
+                modifier = Modifier.size(26.dp),
+                strokeWidth = 2.5.dp
             )
         }
     }

@@ -39,10 +39,7 @@ object PlaylistRepository {
     private val _loadingDetail = MutableStateFlow("")
     val loadingDetail: StateFlow<String> = _loadingDetail
     
-    // Hardcoded test list for quick start if user doesn't have one
-    private const val DEFAULT_M3U = "http://fix.fixekran.xyz:8080/get.php?username=baki&password=W8NYgWCpSWjd&type=m3u_plus&output=mpegts"
-
-    suspend fun loadPlaylist(context: Context, url: String = DEFAULT_M3U) {
+    suspend fun loadPlaylist(context: Context, url: String) {
         if (_isLoading.value) return
         _isLoading.value = true
         _error.value = null

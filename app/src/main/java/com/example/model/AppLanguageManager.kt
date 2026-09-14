@@ -31,17 +31,6 @@ object AppLanguageManager {
         try {
             val locale = Locale(lang)
             Locale.setDefault(locale)
-            val config = Configuration(context.resources.configuration)
-            config.setLocale(locale)
-            @Suppress("DEPRECATION")
-            context.resources.updateConfiguration(config, context.resources.displayMetrics)
-            val appContext = context.applicationContext
-            if (appContext != null && appContext != context) {
-                val appConfig = Configuration(appContext.resources.configuration)
-                appConfig.setLocale(locale)
-                @Suppress("DEPRECATION")
-                appContext.resources.updateConfiguration(appConfig, appContext.resources.displayMetrics)
-            }
         } catch (e: Exception) {
             e.printStackTrace()
         }
