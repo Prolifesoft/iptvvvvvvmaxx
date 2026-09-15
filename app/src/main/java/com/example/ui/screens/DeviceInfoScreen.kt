@@ -83,6 +83,7 @@ fun DeviceInfoScreen(
     var showProDialog by remember { mutableStateOf(false) }
     var showProfileSheet by remember { mutableStateOf(false) }
     var showSupportSheet by remember { mutableStateOf(false) }
+    var showEditCredentialsDialog by remember { mutableStateOf(false) }
     var currentUser by remember { mutableStateOf<com.example.model.db.UserEntity?>(null) }
     var autoDetectedWelcomeName by remember { mutableStateOf<String?>(null) }
     var isAutoRedirecting by remember { mutableStateOf(false) }
@@ -94,7 +95,7 @@ fun DeviceInfoScreen(
         val db = AppDatabase.getDatabase(context)
         val user = withContext(Dispatchers.IO) {
             val fetched = if (userId.isNotBlank()) db.iptvDao().getUser(userId) else db.iptvDao().getFirstUser()
-            if (fetched != null && (fetched.id == "demo@maxxbilisim.com" || fetched.name == "Demo User" || fetched.email == "demo@maxxbilisim.com")) {
+            if (fetched != null && fetched.email.isNullOrBlank()) {
                 db.iptvDao().clearUsers()
                 null
             } else {
@@ -507,6 +508,48 @@ fun DeviceInfoScreen(
                                     Icon(Icons.Default.ContentCopy, contentDescription = "Kopyala", tint = Color(0xFFFFCA28), modifier = Modifier.size(18.dp))
                                 }
                             }
+
+                            Spacer(modifier = Modifier.height(4.dp))
+
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                            ) {
+                                Button(
+                                    onClick = { showEditCredentialsDialog = true },
+                                    modifier = Modifier.weight(1f).height(36.dp),
+                                    shape = RoundedCornerShape(8.dp),
+                                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF1565C0)),
+                                    contentPadding = PaddingValues(horizontal = 8.dp, vertical = 0.dp)
+                                ) {
+                                    Icon(Icons.Default.Edit, contentDescription = null, tint = Color.White, modifier = Modifier.size(14.dp))
+                                    Spacer(modifier = Modifier.width(4.dp))
+                                    Text("Cihazı Bağla / ID & PIN Gir", fontSize = 11.sp, fontWeight = FontWeight.Bold, maxLines = 1)
+                                }
+
+                                OutlinedButton(
+                                    onClick = {
+                                        scope.launch {
+                                            val targetId = currentUser?.id ?: userId
+                                            val count = OdooIntegrationManager.syncPlaylistsFromOdoo(context, targetId)
+                                            if (count > 0) {
+                                                Toast.makeText(context, "$count adet çalma listesi başarıyla senkronize edildi!", Toast.LENGTH_SHORT).show()
+                                                onContinue()
+                                            } else {
+                                                Toast.makeText(context, OdooIntegrationManager.lastSyncMessage.value.orEmpty(), Toast.LENGTH_LONG).show()
+                                            }
+                                        }
+                                    },
+                                    modifier = Modifier.height(36.dp),
+                                    shape = RoundedCornerShape(8.dp),
+                                    colors = ButtonDefaults.outlinedButtonColors(contentColor = Color.White),
+                                    contentPadding = PaddingValues(horizontal = 8.dp, vertical = 0.dp)
+                                ) {
+                                    Icon(Icons.Default.Sync, contentDescription = null, tint = Color(0xFF42A5F5), modifier = Modifier.size(14.dp))
+                                    Spacer(modifier = Modifier.width(4.dp))
+                                    Text("Yenile", fontSize = 11.sp, fontWeight = FontWeight.Medium)
+                                }
+                            }
                         }
                     }
                 }
@@ -838,5 +881,107 @@ fun DeviceInfoScreen(
         ) {
             SupportTicketsSheet(onClose = { showSupportSheet = false })
         }
+    }
+
+    if (showEditCredentialsDialog) {
+        var inputId by remember { mutableStateOf(deviceId) }
+        var inputPin by remember { mutableStateOf(deviceKey) }
+        var isConnecting by remember { mutableStateOf(false) }
+
+        AlertDialog(
+            onDismissRequest = { if (!isConnecting) showEditCredentialsDialog = false },
+            title = {
+                Text(
+                    text = "Odoo Cihazını Bağla",
+                    fontWeight = FontWeight.Bold,
+                    color = Color.White,
+                    fontSize = 16.sp
+                )
+            },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    Text(
+                        text = "Odoo panelinizde, paketinizde veya siparişinizde kayıtlı olan Cihaz ID ve PIN bilgilerini girerek çalma listelerinizi bu cihaza bağlayabilirsiniz.",
+                        color = Color.LightGray,
+                        fontSize = 12.sp
+                    )
+
+                    OutlinedTextField(
+                        value = inputId,
+                        onValueChange = { inputId = it.uppercase(java.util.Locale.ROOT).trim() },
+                        label = { Text("Cihaz ID (Örn: MAX-XXXX-XXXX)", fontSize = 11.sp) },
+                        singleLine = true,
+                        colors = OutlinedTextFieldDefaults.colors(
+                            focusedTextColor = Color.White,
+                            unfocusedTextColor = Color.White,
+                            focusedBorderColor = Color(0xFF42A5F5),
+                            unfocusedBorderColor = Color.Gray
+                        ),
+                        modifier = Modifier.fillMaxWidth()
+                    )
+
+                    OutlinedTextField(
+                        value = inputPin,
+                        onValueChange = { inputPin = it.trim() },
+                        label = { Text("Cihaz PIN / Anahtarı (Örn: 123456)", fontSize = 11.sp) },
+                        singleLine = true,
+                        colors = OutlinedTextFieldDefaults.colors(
+                            focusedTextColor = Color.White,
+                            unfocusedTextColor = Color.White,
+                            focusedBorderColor = Color(0xFF42A5F5),
+                            unfocusedBorderColor = Color.Gray
+                        ),
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                }
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        val cleanId = inputId.trim()
+                        val cleanPin = inputPin.trim()
+                        if (cleanId.isBlank() || cleanPin.isBlank()) {
+                            Toast.makeText(context, "Lütfen Cihaz ID ve PIN giriniz", Toast.LENGTH_SHORT).show()
+                            return@Button
+                        }
+                        isConnecting = true
+                        DeviceManager.setDeviceCredentials(cleanId, cleanPin)
+                        deviceId = DeviceManager.getDeviceId()
+                        deviceKey = DeviceManager.getDeviceKey()
+                        webPortalUrl = DeviceManager.getWebPortalUrl()
+
+                        scope.launch {
+                            val targetId = currentUser?.id ?: userId
+                            val count = OdooIntegrationManager.syncPlaylistsFromOdoo(context, targetId)
+                            isConnecting = false
+                            showEditCredentialsDialog = false
+                            if (count > 0) {
+                                Toast.makeText(context, "$count adet çalma listesi başarıyla bağlandı ve yüklendi!", Toast.LENGTH_LONG).show()
+                                onContinue()
+                            } else {
+                                Toast.makeText(context, OdooIntegrationManager.lastSyncMessage.value.orEmpty(), Toast.LENGTH_LONG).show()
+                            }
+                        }
+                    },
+                    enabled = !isConnecting,
+                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF1565C0))
+                ) {
+                    if (isConnecting) {
+                        CircularProgressIndicator(color = Color.White, modifier = Modifier.size(16.dp), strokeWidth = 2.dp)
+                        Spacer(modifier = Modifier.width(6.dp))
+                    }
+                    Text("Bağla ve Listeleri Çek", fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                }
+            },
+            dismissButton = {
+                TextButton(
+                    onClick = { showEditCredentialsDialog = false },
+                    enabled = !isConnecting
+                ) {
+                    Text("İptal", color = Color.LightGray, fontSize = 12.sp)
+                }
+            },
+            containerColor = Color(0xFF1E232A)
+        )
     }
 }

@@ -54,7 +54,7 @@ fun SplashScreen(
                     val existingUser = withContext(Dispatchers.IO) {
                         val db = com.example.model.db.AppDatabase.getDatabase(context)
                         val user = db.iptvDao().getFirstUser()
-                        if (user != null && (user.id == "demo@maxxbilisim.com" || user.name == "Demo User" || user.email == "demo@maxxbilisim.com")) {
+                        if (user != null && user.email.isNullOrBlank()) {
                             db.iptvDao().clearUsers()
                             null
                         } else {
@@ -74,6 +74,13 @@ fun SplashScreen(
     }
 
     LaunchedEffect(Unit) {
+        scope.launch(Dispatchers.IO) {
+            try {
+                com.example.model.DeviceManager.init(context)
+            } catch (e: Exception) {
+                // Ignore
+            }
+        }
         delay(900)
         navigateNext()
     }

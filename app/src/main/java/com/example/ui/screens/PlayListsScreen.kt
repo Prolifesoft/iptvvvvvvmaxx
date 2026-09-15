@@ -37,24 +37,43 @@ fun PlayListsScreen(
 ) {
     var searchQuery by remember { mutableStateOf("") }
     val context = LocalContext.current
+    val scope = rememberCoroutineScope()
     val db = remember { AppDatabase.getDatabase(context) }
-    val playlists by db.iptvDao().getPlaylistsForUser(userId).collectAsState(initial = emptyList())
+    
+    val effectiveUserId = remember(userId) {
+        if (userId.isNotBlank()) userId else (DeviceManager.getCurrentUserId() ?: DeviceManager.getDeviceId())
+    }
+    val userPlaylists by if (effectiveUserId.isNotBlank()) {
+        db.iptvDao().getPlaylistsForUser(effectiveUserId).collectAsState(initial = emptyList())
+    } else {
+        db.iptvDao().getAllPlaylists().collectAsState(initial = emptyList())
+    }
+    val allPlaylists by db.iptvDao().getAllPlaylists().collectAsState(initial = emptyList())
+    val playlists = if (userPlaylists.isNotEmpty()) userPlaylists else allPlaylists
 
     val daysRemaining by DeviceManager.trialDaysLeft.collectAsState()
     val isPro by DeviceManager.isProState.collectAsState()
     val isProOrInTrial by DeviceManager.isProOrInTrialState.collectAsState()
     val isSyncing by OdooIntegrationManager.isSyncing.collectAsState()
+    val lastSyncMsg by OdooIntegrationManager.lastSyncMessage.collectAsState()
     val customerName by DeviceManager.customerNameState.collectAsState()
 
     var showProDialog by remember { mutableStateOf(false) }
     var showProfileSheet by remember { mutableStateOf(false) }
+    var showEditCredentialsDialog by remember { mutableStateOf(false) }
 
     // Background periodic Odoo sync to keep lists in sync with Odoo deletions/additions
-    LaunchedEffect(userId) {
+    LaunchedEffect(effectiveUserId) {
+        // Run an immediate sync on enter
+        try {
+            OdooIntegrationManager.syncPlaylistsFromOdoo(context, effectiveUserId)
+        } catch (e: Exception) {
+            // Ignore
+        }
         while (true) {
             delay(15000)
             try {
-                OdooIntegrationManager.syncPlaylistsFromOdoo(context, userId)
+                OdooIntegrationManager.syncPlaylistsFromOdoo(context, effectiveUserId)
             } catch (e: Exception) {
                 // Ignore network glitches during background sync
             }
@@ -73,6 +92,26 @@ fun PlayListsScreen(
                     }
                 },
                 actions = {
+                    // Manual Odoo Sync Button
+                    IconButton(
+                        onClick = {
+                            scope.launch {
+                                val count = OdooIntegrationManager.syncPlaylistsFromOdoo(context, effectiveUserId)
+                                if (count > 0) {
+                                    Toast.makeText(context, "$count adet çalma listesi güncellendi", Toast.LENGTH_SHORT).show()
+                                } else {
+                                    Toast.makeText(context, OdooIntegrationManager.lastSyncMessage.value.orEmpty(), Toast.LENGTH_LONG).show()
+                                }
+                            }
+                        }
+                    ) {
+                        if (isSyncing) {
+                            CircularProgressIndicator(modifier = Modifier.size(20.dp), color = Color.White, strokeWidth = 2.dp)
+                        } else {
+                            Icon(Icons.Default.Sync, contentDescription = "Odoo Senkronize Et", tint = Color.White)
+                        }
+                    }
+
                     // Device Info & QR Code
                     IconButton(onClick = onDeviceInfo) {
                         Icon(Icons.Default.QrCode2, contentDescription = "Cihaz ve QR Kod", tint = Color.White)
@@ -185,7 +224,7 @@ fun PlayListsScreen(
             }
             
             if (filteredPlaylists.isEmpty() && playlists.isEmpty()) {
-                // Empty State: Direct user to web portal / device info
+                // Empty State: Direct user to web portal / device info & provide sync and bind actions
                 Box(
                     modifier = Modifier
                         .fillMaxWidth()
@@ -194,15 +233,15 @@ fun PlayListsScreen(
                 ) {
                     Column(
                         horizontalAlignment = Alignment.CenterHorizontally,
-                        modifier = Modifier.padding(24.dp)
+                        modifier = Modifier.padding(20.dp)
                     ) {
                         Icon(
-                            Icons.Default.QrCode2,
+                            Icons.Default.CloudSync,
                             contentDescription = null,
                             tint = RedPrimary,
-                            modifier = Modifier.size(56.dp)
+                            modifier = Modifier.size(52.dp)
                         )
-                        Spacer(modifier = Modifier.height(16.dp))
+                        Spacer(modifier = Modifier.height(12.dp))
                         Text(
                             stringResource(R.string.odoo_no_playlists_assigned),
                             color = Color.White,
@@ -210,25 +249,103 @@ fun PlayListsScreen(
                             fontWeight = FontWeight.Bold,
                             textAlign = androidx.compose.ui.text.style.TextAlign.Center
                         )
-                        Spacer(modifier = Modifier.height(8.dp))
+                        Spacer(modifier = Modifier.height(6.dp))
                         Text(
                             stringResource(R.string.odoo_waiting_playlists_desc),
                             color = Color.Gray,
-                            fontSize = 13.sp,
+                            fontSize = 12.sp,
                             textAlign = androidx.compose.ui.text.style.TextAlign.Center
                         )
-                        Spacer(modifier = Modifier.height(20.dp))
-                        Row(
-                            horizontalArrangement = Arrangement.Center,
-                            verticalAlignment = Alignment.CenterVertically
+
+                        // Current Device Credentials Badge
+                        Spacer(modifier = Modifier.height(12.dp))
+                        Surface(
+                            shape = RoundedCornerShape(8.dp),
+                            color = MaterialTheme.colorScheme.surface,
+                            modifier = Modifier.fillMaxWidth(0.95f)
+                        ) {
+                            Column(
+                                modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
+                                horizontalAlignment = Alignment.CenterHorizontally
+                            ) {
+                                Text(
+                                    text = "Cihaz ID: ${DeviceManager.getDeviceId()} | PIN: ${DeviceManager.getDeviceKey()}",
+                                    color = Color(0xFFFFCA28),
+                                    fontSize = 11.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace
+                                )
+                                val syncMsgText = lastSyncMsg.orEmpty()
+                                if (syncMsgText.isNotBlank()) {
+                                    Spacer(modifier = Modifier.height(4.dp))
+                                    Text(
+                                        text = syncMsgText,
+                                        color = if (syncMsgText.contains("başarıyla", ignoreCase = true)) Color(0xFF81C784) else Color.LightGray,
+                                        fontSize = 10.sp,
+                                        textAlign = androidx.compose.ui.text.style.TextAlign.Center
+                                    )
+                                }
+                            }
+                        }
+
+                        Spacer(modifier = Modifier.height(16.dp))
+                        Column(
+                            modifier = Modifier.fillMaxWidth(0.95f),
+                            verticalArrangement = Arrangement.spacedBy(8.dp),
+                            horizontalAlignment = Alignment.CenterHorizontally
                         ) {
                             Button(
-                                onClick = onDeviceInfo,
-                                colors = ButtonDefaults.buttonColors(containerColor = RedPrimary)
+                                onClick = {
+                                    scope.launch {
+                                        val count = OdooIntegrationManager.syncPlaylistsFromOdoo(context, effectiveUserId)
+                                        if (count > 0) {
+                                            Toast.makeText(context, "$count adet çalma listesi başarıyla senkronize edildi!", Toast.LENGTH_SHORT).show()
+                                        } else {
+                                            Toast.makeText(context, OdooIntegrationManager.lastSyncMessage.value.orEmpty(), Toast.LENGTH_LONG).show()
+                                        }
+                                    }
+                                },
+                                enabled = !isSyncing,
+                                colors = ButtonDefaults.buttonColors(containerColor = RedPrimary),
+                                modifier = Modifier.fillMaxWidth().height(42.dp)
                             ) {
-                                Icon(Icons.Default.QrCode2, contentDescription = null, modifier = Modifier.size(18.dp))
-                                Spacer(modifier = Modifier.width(6.dp))
-                                Text("Karekod & Cihaz ile Yönet")
+                                if (isSyncing) {
+                                    CircularProgressIndicator(color = Color.White, modifier = Modifier.size(16.dp), strokeWidth = 2.dp)
+                                    Spacer(modifier = Modifier.width(8.dp))
+                                } else {
+                                    Icon(Icons.Default.Sync, contentDescription = null, modifier = Modifier.size(18.dp))
+                                    Spacer(modifier = Modifier.width(6.dp))
+                                }
+                                Text("Odoo'dan Listeleri Şimdi Çek", fontWeight = FontWeight.Bold, fontSize = 13.sp)
+                            }
+
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                            ) {
+                                Button(
+                                    onClick = { showEditCredentialsDialog = true },
+                                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF1565C0)),
+                                    modifier = Modifier.weight(1f).height(38.dp),
+                                    shape = RoundedCornerShape(8.dp),
+                                    contentPadding = PaddingValues(horizontal = 4.dp, vertical = 0.dp)
+                                ) {
+                                    Icon(Icons.Default.Edit, contentDescription = null, modifier = Modifier.size(14.dp))
+                                    Spacer(modifier = Modifier.width(4.dp))
+                                    Text("Cihazı Bağla", fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                                }
+
+                                OutlinedButton(
+                                    onClick = onDeviceInfo,
+                                    colors = ButtonDefaults.outlinedButtonColors(contentColor = Color.White),
+                                    modifier = Modifier.weight(1f).height(38.dp),
+                                    shape = RoundedCornerShape(8.dp),
+                                    contentPadding = PaddingValues(horizontal = 4.dp, vertical = 0.dp)
+                                ) {
+                                    Icon(Icons.Default.QrCode2, contentDescription = null, modifier = Modifier.size(14.dp))
+                                    Spacer(modifier = Modifier.width(4.dp))
+                                    Text("Cihaz & Karekod", fontSize = 11.sp)
+                                }
                             }
                         }
                     }
@@ -293,6 +410,103 @@ fun PlayListsScreen(
                 }
             )
         }
+    }
+
+    if (showEditCredentialsDialog) {
+        var inputId by remember { mutableStateOf(DeviceManager.getDeviceId()) }
+        var inputPin by remember { mutableStateOf(DeviceManager.getDeviceKey()) }
+        var isConnecting by remember { mutableStateOf(false) }
+
+        AlertDialog(
+            onDismissRequest = { if (!isConnecting) showEditCredentialsDialog = false },
+            title = {
+                Text(
+                    text = "Odoo Cihazını Bağla",
+                    fontWeight = FontWeight.Bold,
+                    color = Color.White,
+                    fontSize = 16.sp
+                )
+            },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    Text(
+                        text = "Odoo panelinizde, paketinizde veya siparişinizde kayıtlı olan Cihaz ID ve PIN bilgilerini girerek çalma listelerinizi bu cihaza bağlayabilirsiniz.",
+                        color = Color.LightGray,
+                        fontSize = 12.sp
+                    )
+
+                    OutlinedTextField(
+                        value = inputId,
+                        onValueChange = { inputId = it.uppercase(java.util.Locale.ROOT).trim() },
+                        label = { Text("Cihaz ID (Örn: MAX-XXXX-XXXX)", fontSize = 11.sp) },
+                        singleLine = true,
+                        colors = OutlinedTextFieldDefaults.colors(
+                            focusedTextColor = Color.White,
+                            unfocusedTextColor = Color.White,
+                            focusedBorderColor = Color(0xFF42A5F5),
+                            unfocusedBorderColor = Color.Gray
+                        ),
+                        modifier = Modifier.fillMaxWidth()
+                    )
+
+                    OutlinedTextField(
+                        value = inputPin,
+                        onValueChange = { inputPin = it.trim() },
+                        label = { Text("Cihaz PIN / Anahtarı (Örn: 123456)", fontSize = 11.sp) },
+                        singleLine = true,
+                        colors = OutlinedTextFieldDefaults.colors(
+                            focusedTextColor = Color.White,
+                            unfocusedTextColor = Color.White,
+                            focusedBorderColor = Color(0xFF42A5F5),
+                            unfocusedBorderColor = Color.Gray
+                        ),
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                }
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        val cleanId = inputId.trim()
+                        val cleanPin = inputPin.trim()
+                        if (cleanId.isBlank() || cleanPin.isBlank()) {
+                            Toast.makeText(context, "Lütfen Cihaz ID ve PIN giriniz", Toast.LENGTH_SHORT).show()
+                            return@Button
+                        }
+                        isConnecting = true
+                        DeviceManager.setDeviceCredentials(cleanId, cleanPin)
+
+                        scope.launch {
+                            val count = OdooIntegrationManager.syncPlaylistsFromOdoo(context, effectiveUserId)
+                            isConnecting = false
+                            showEditCredentialsDialog = false
+                            if (count > 0) {
+                                Toast.makeText(context, "$count adet çalma listesi başarıyla bağlandı ve yüklendi!", Toast.LENGTH_LONG).show()
+                            } else {
+                                Toast.makeText(context, OdooIntegrationManager.lastSyncMessage.value.orEmpty(), Toast.LENGTH_LONG).show()
+                            }
+                        }
+                    },
+                    enabled = !isConnecting,
+                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF1565C0))
+                ) {
+                    if (isConnecting) {
+                        CircularProgressIndicator(color = Color.White, modifier = Modifier.size(16.dp), strokeWidth = 2.dp)
+                        Spacer(modifier = Modifier.width(6.dp))
+                    }
+                    Text("Bağla ve Listeleri Çek", fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                }
+            },
+            dismissButton = {
+                TextButton(
+                    onClick = { showEditCredentialsDialog = false },
+                    enabled = !isConnecting
+                ) {
+                    Text("İptal", color = Color.LightGray, fontSize = 12.sp)
+                }
+            },
+            containerColor = Color(0xFF1E232A)
+        )
     }
 }
 

@@ -32,6 +32,9 @@ interface IptvDao {
     suspend fun getPlaylistsForUserSync(userId: String): List<PlaylistEntity>
 
     @Query("SELECT * FROM playlists ORDER BY timestamp DESC")
+    fun getAllPlaylists(): Flow<List<PlaylistEntity>>
+
+    @Query("SELECT * FROM playlists ORDER BY timestamp DESC")
     suspend fun getAllPlaylistsSync(): List<PlaylistEntity>
 
     @Query("SELECT * FROM playlists WHERE id = :id LIMIT 1")

@@ -222,8 +222,6 @@ fun GoogleSignInScreen(onSignInSuccess: (String) -> Unit) {
                 }
             }
 
-
-            
             Spacer(modifier = Modifier.height(24.dp))
             
             // Bilgilendirme Kartı

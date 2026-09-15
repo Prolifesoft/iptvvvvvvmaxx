@@ -98,6 +98,8 @@ object OdooIntegrationManager {
                     readTimeout = 6000
                     doOutput = true
                     setRequestProperty("Content-Type", "application/json; charset=UTF-8")
+                    setRequestProperty("Accept", "application/json")
+                    setRequestProperty("User-Agent", "Mozilla/5.0 (Linux; Android 14; Mobile) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36")
                 }
                 val params = JSONObject().apply {
                     put("email", userEmail)
@@ -238,61 +240,71 @@ object OdooIntegrationManager {
     /**
      * Synchronizes playlists from Odoo 19 linked to the user's account & device.
      * Pulls all playlists ("birden fazla çalma listesi varsa hepsini gösterecek").
-     * Also removes any playlists locally that were removed/deleted on Odoo backend.
+     * Safely updates local playlists without deleting existing lists on network/sync errors.
      */
     suspend fun syncPlaylistsFromOdoo(context: Context, userId: String): Int = withContext(Dispatchers.IO) {
         _isSyncing.value = true
         var resultCount = 0
         try {
             val db = AppDatabase.getDatabase(context)
+            val effectiveUserId = if (userId.isNotBlank()) userId else (DeviceManager.getCurrentUserId() ?: DeviceManager.getDeviceId())
+
             // Ensure user exists in Room DB to satisfy foreign key constraints
-            val existingUser = db.iptvDao().getUser(userId)
+            val existingUser = db.iptvDao().getUser(effectiveUserId)
             if (existingUser == null) {
                 db.iptvDao().insertUser(
                     com.example.model.db.UserEntity(
-                        id = userId,
-                        name = DeviceManager.getCustomerName() ?: "IPTV Kullanıcısı",
-                        email = ""
+                        id = effectiveUserId,
+                        name = DeviceManager.getCustomerName() ?: DeviceManager.getCurrentUserName() ?: "IPTV Kullanıcısı",
+                        email = DeviceManager.getCurrentUserEmail() ?: ""
                     )
                 )
             }
-            val existingPlaylists = db.iptvDao().getPlaylistsForUserSync(userId)
 
-            // 1. Fetch remote playlists from Odoo / customer account
-            val odooPlaylists = fetchRemotePlaylistsFromOdoo(userId)
-            val remoteUrls = odooPlaylists.map { it.hostUrl }.toSet()
-            val localPlaylists = db.iptvDao().getPlaylistsForUserSync(userId)
+            // 1. Fetch remote playlists from Odoo
+            val odooPlaylists = fetchRemotePlaylistsFromOdoo(effectiveUserId)
+            val localPlaylists = db.iptvDao().getPlaylistsForUserSync(effectiveUserId)
 
-            // Remove local playlists that were removed on Odoo backend
-            for (local in localPlaylists) {
-                if (!remoteUrls.contains(local.hostUrl)) {
-                    db.iptvDao().deletePlaylist(local)
+            if (odooPlaylists.isNotEmpty()) {
+                val remoteUrls = odooPlaylists.map { it.hostUrl }.toSet()
+
+                // Only remove local playlists if they were genuinely deleted on Odoo backend
+                for (local in localPlaylists) {
+                    if (!remoteUrls.contains(local.hostUrl)) {
+                        db.iptvDao().deletePlaylist(local)
+                    }
+                }
+
+                // Insert or update remote playlists from Odoo
+                for (p in odooPlaylists) {
+                    val existing = localPlaylists.find { it.hostUrl == p.hostUrl }
+                    if (existing == null) {
+                        val entity = PlaylistEntity(
+                            userId = effectiveUserId,
+                            name = p.name,
+                            hostUrl = p.hostUrl,
+                            username = p.username,
+                            password = p.password
+                        )
+                        db.iptvDao().insertPlaylist(entity)
+                    } else if (existing.name != p.name || existing.username != p.username || existing.password != p.password) {
+                        val updated = existing.copy(
+                            name = p.name,
+                            username = p.username,
+                            password = p.password
+                        )
+                        db.iptvDao().insertPlaylist(updated)
+                    }
+                }
+                resultCount = odooPlaylists.size
+                _lastSyncMessage.value = "$resultCount adet çalma listesi Odoo 19'dan başarıyla senkronize edildi."
+            } else {
+                // If remote returned 0 playlists, preserve existing local playlists (do not delete on potential error)
+                val currentMsg = _lastSyncMessage.value.orEmpty()
+                if (currentMsg.isBlank() || currentMsg.contains("senkronize", ignoreCase = true)) {
+                    _lastSyncMessage.value = "Odoo üzerinde bu cihaza ait tanımlı çalma listesi bulunamadı."
                 }
             }
-
-            // Insert or update remote playlists from Odoo
-            for (p in odooPlaylists) {
-                val existing = localPlaylists.find { it.hostUrl == p.hostUrl }
-                if (existing == null) {
-                    val entity = PlaylistEntity(
-                        userId = userId,
-                        name = p.name,
-                        hostUrl = p.hostUrl,
-                        username = p.username,
-                        password = p.password
-                    )
-                    db.iptvDao().insertPlaylist(entity)
-                } else if (existing.name != p.name || existing.username != p.username || existing.password != p.password) {
-                    val updated = existing.copy(
-                        name = p.name,
-                        username = p.username,
-                        password = p.password
-                    )
-                    db.iptvDao().insertPlaylist(updated)
-                }
-            }
-            resultCount = odooPlaylists.size
-            _lastSyncMessage.value = if (resultCount > 0) "$resultCount adet çalma listesi Odoo 19'dan başarıyla senkronize edildi." else "Odoo 19 üzerinde bu cihaza ait çalma listesi bulunamadı."
         } catch (e: Exception) {
             Log.e(TAG, "Error syncing playlists from Odoo", e)
             _lastSyncMessage.value = "Odoo senkronizasyon hatası: ${e.localizedMessage}"
@@ -300,6 +312,97 @@ object OdooIntegrationManager {
             _isSyncing.value = false
         }
         resultCount
+    }
+
+    /**
+     * Extracts playlists from any JSON structure returned by Odoo.
+     */
+    private fun extractPlaylistsFromJson(jsonObjOrArray: Any?): List<OdooPlaylistPayload> {
+        val list = mutableListOf<OdooPlaylistPayload>()
+        if (jsonObjOrArray == null) return list
+
+        fun parseItem(item: JSONObject, index: Int): OdooPlaylistPayload? {
+            val hostUrl = item.optString("hostUrl",
+                item.optString("host_url",
+                    item.optString("url",
+                        item.optString("playlist_url",
+                            item.optString("m3u_url",
+                                item.optString("stream_url",
+                                    item.optString("server_url",
+                                        item.optString("server",
+                                            item.optString("portal_url",
+                                                item.optString("portal",
+                                                    item.optString("dns",
+                                                        item.optString("link", "")))))))))))).trim()
+            if (hostUrl.isBlank()) return null
+
+            var username = item.optString("username", item.optString("user", item.optString("account", ""))).trim()
+            var password = item.optString("password", item.optString("pass", "")).trim()
+            val name = item.optString("name", item.optString("title", item.optString("playlist_name", item.optString("package_name", "Odoo Çalma Listesi ${index + 1}")))).trim()
+            val isM3u = item.optBoolean("isM3u", item.optBoolean("is_m3u", hostUrl.contains(".m3u", ignoreCase = true) || hostUrl.contains("type=m3u", ignoreCase = true)))
+
+            // Extract credentials from URL query params if missing
+            if (username.isBlank() && hostUrl.contains("username=")) {
+                val userMatch = Regex("[?&]username=([^&]+)").find(hostUrl)
+                if (userMatch != null) username = userMatch.groupValues[1]
+            }
+            if (password.isBlank() && hostUrl.contains("password=")) {
+                val passMatch = Regex("[?&]password=([^&]+)").find(hostUrl)
+                if (passMatch != null) password = passMatch.groupValues[1]
+            }
+
+            return OdooPlaylistPayload(
+                name = if (name.isNotBlank()) name else "Odoo Çalma Listesi ${index + 1}",
+                hostUrl = hostUrl,
+                username = username,
+                password = password,
+                isM3u = isM3u
+            )
+        }
+
+        if (jsonObjOrArray is org.json.JSONArray) {
+            for (i in 0 until jsonObjOrArray.length()) {
+                val itm = jsonObjOrArray.optJSONObject(i)
+                if (itm != null) {
+                    val parsed = parseItem(itm, i)
+                    if (parsed != null) list.add(parsed)
+                }
+            }
+            return list
+        }
+
+        if (jsonObjOrArray is JSONObject) {
+            val arraysToCheck = listOf("playlists", "playlist", "data", "items", "list", "lines", "channels")
+            for (key in arraysToCheck) {
+                val arr = jsonObjOrArray.optJSONArray(key)
+                if (arr != null && arr.length() > 0) {
+                    for (i in 0 until arr.length()) {
+                        val itm = arr.optJSONObject(i)
+                        if (itm != null) {
+                            val parsed = parseItem(itm, i)
+                            if (parsed != null) list.add(parsed)
+                        }
+                    }
+                    if (list.isNotEmpty()) return list
+                }
+            }
+
+            // Check if "playlist" is a single JSONObject
+            val singleObj = jsonObjOrArray.optJSONObject("playlist")
+            if (singleObj != null) {
+                val parsed = parseItem(singleObj, 0)
+                if (parsed != null) list.add(parsed)
+                if (list.isNotEmpty()) return list
+            }
+
+            // Check if jsonObjOrArray itself represents a playlist
+            val selfParsed = parseItem(jsonObjOrArray, 0)
+            if (selfParsed != null) {
+                list.add(selfParsed)
+            }
+        }
+
+        return list
     }
 
     /**
@@ -312,16 +415,23 @@ object OdooIntegrationManager {
             val url = URL(endpoint)
             val conn = (url.openConnection() as HttpURLConnection).apply {
                 requestMethod = "POST"
-                connectTimeout = 5000
-                readTimeout = 5000
+                connectTimeout = 7000
+                readTimeout = 7000
                 doOutput = true
                 setRequestProperty("Content-Type", "application/json; charset=UTF-8")
+                setRequestProperty("Accept", "application/json")
+                setRequestProperty("User-Agent", "Mozilla/5.0 (Linux; Android 14; Mobile) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36")
             }
+            val effectiveEmail = if (userId.contains("@")) userId else (DeviceManager.getCurrentUserEmail() ?: "")
             val params = JSONObject().apply {
                 put("device_id", DeviceManager.getDeviceId())
                 put("device_key", DeviceManager.getDeviceKey())
+                put("pin", DeviceManager.getDeviceKey())
+                put("key", DeviceManager.getDeviceKey())
+                put("mac", DeviceManager.getMacAddress())
+                put("mac_address", DeviceManager.getMacAddress())
                 put("user_id", userId)
-                put("email", userId)
+                put("email", effectiveEmail)
             }
             val payload = JSONObject().apply {
                 put("jsonrpc", "2.0")
@@ -329,60 +439,58 @@ object OdooIntegrationManager {
                 put("params", params)
             }
             OutputStreamWriter(conn.outputStream).use { it.write(payload.toString()) }
-            if (conn.responseCode in 200..299) {
-                val responseStr = conn.inputStream.bufferedReader().use { it.readText() }
-                conn.disconnect()
-                Log.d(TAG, "Odoo playlists/get response: $responseStr")
+            val code = conn.responseCode
+            val responseStr = if (code in 200..299) {
+                conn.inputStream.bufferedReader().use { it.readText() }
+            } else {
+                conn.errorStream?.bufferedReader()?.use { it.readText() } ?: ""
+            }
+            conn.disconnect()
+            Log.d(TAG, "Odoo playlists/get response code: $code, response: $responseStr")
+
+            if (responseStr.isNotBlank()) {
                 val rootJson = JSONObject(responseStr)
-                // Odoo returns {"jsonrpc": "2.0", "result": {...}}
-                val json = rootJson.optJSONObject("result") ?: rootJson
-                parseOdooPackageResponse(json)
-                
-                // If Odoo returns is_pro or days_remaining, update device state
-                if (json.optBoolean("is_pro", false)) {
-                    DeviceManager.upgradeToPro()
-                }
-                if (json.has("days_remaining")) {
-                    val remaining = json.optInt("days_remaining", -1)
-                    if (remaining >= 0) {
-                        DeviceManager.updateTrialDays(remaining)
+                val resultObj = rootJson.opt("result")
+                val errorObj = rootJson.optJSONObject("error")
+                val errorMsg = errorObj?.optJSONObject("data")?.optString("message")
+                    ?: errorObj?.optString("message")
+
+                if (resultObj is JSONObject) {
+                    parseOdooPackageResponse(resultObj)
+                    val status = resultObj.optString("status", "")
+                    val message = resultObj.optString("message", "")
+                    if (status == "error" && message.isNotBlank()) {
+                        _lastSyncMessage.value = "Odoo: $message"
                     }
-                }
 
-                // Extract Customer Name from Odoo response if available
-                val odooCustomerName = json.optString("customer_name", json.optString("partner_name", json.optString("name", ""))).trim()
-                if (odooCustomerName.isNotBlank()) {
-                    DeviceManager.setCustomerName(odooCustomerName)
-                }
-
-                val playlistsArray = json.optJSONArray("playlists")
-                if (playlistsArray != null && playlistsArray.length() > 0) {
-                    val list = mutableListOf<OdooPlaylistPayload>()
-                    for (i in 0 until playlistsArray.length()) {
-                        val item = playlistsArray.getJSONObject(i)
-                        val hostUrl = item.optString("hostUrl", item.optString("host_url", "")).trim()
-                        if (hostUrl.isNotBlank()) {
-                            list.add(
-                                OdooPlaylistPayload(
-                                    name = item.optString("name", "Odoo Çalma Listesi ${i + 1}"),
-                                    hostUrl = hostUrl,
-                                    username = item.optString("username", ""),
-                                    password = item.optString("password", ""),
-                                    isM3u = item.optBoolean("isM3u", item.optBoolean("is_m3u", false))
-                                )
-                            )
+                    if (resultObj.optBoolean("is_pro", false)) {
+                        DeviceManager.upgradeToPro()
+                    }
+                    if (resultObj.has("days_remaining")) {
+                        val remaining = resultObj.optInt("days_remaining", -1)
+                        if (remaining >= 0) {
+                            DeviceManager.updateTrialDays(remaining)
                         }
                     }
-                    return list
+
+                    val odooCustomerName = resultObj.optString("customer_name", resultObj.optString("partner_name", resultObj.optString("name", ""))).trim()
+                    if (odooCustomerName.isNotBlank()) {
+                        DeviceManager.setCustomerName(odooCustomerName)
+                    }
+                } else if (errorMsg != null && errorMsg.isNotBlank()) {
+                    _lastSyncMessage.value = "Odoo: $errorMsg"
                 }
-            } else {
-                conn.disconnect()
+
+                val playlists = extractPlaylistsFromJson(resultObj ?: rootJson)
+                if (playlists.isNotEmpty()) {
+                    return playlists
+                }
             }
         } catch (e: Exception) {
-            Log.i(TAG, "Live Odoo sync attempt: ${e.message}")
+            Log.i(TAG, "Live Odoo sync attempt failed: ${e.message}")
+            _lastSyncMessage.value = "Bağlantı hatası: ${e.localizedMessage}"
         }
 
-        // Return empty list if no playlists assigned on Odoo server
         return emptyList()
     }
 }

@@ -243,9 +243,22 @@ object DeviceManager {
             .apply()
     }
 
+    fun getCurrentUserId(): String? = if (::prefs.isInitialized) prefs.getString("current_user_id", null) else null
+    fun getCurrentUserEmail(): String? = if (::prefs.isInitialized) prefs.getString("current_user_email", null) else null
+    fun getCurrentUserName(): String? = if (::prefs.isInitialized) prefs.getString("current_user_name", null) else null
+
     fun getOdooShopTrialUrl(): String {
         val server = getOdooServerUrl().trimEnd('/')
         return "$server/shop/trial/activate?device=${getDeviceId()}&key=${getDeviceKey()}"
+    }
+
+    fun getOdooShopPackagesUrl(): String {
+        val customUpgradeUrl = _upgradeUrl.value
+        if (!customUpgradeUrl.isNullOrBlank()) return customUpgradeUrl
+        val server = getOdooServerUrl().trimEnd('/')
+        val devId = getDeviceId()
+        val devKey = getDeviceKey()
+        return "$server/shop?device=$devId&key=$devKey"
     }
 
     data class OdooPackageInfo(
